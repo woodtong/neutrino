@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose a capability or a change in behavior.
+title: "[feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is painful today, and for whom?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Capture
+        - Input
+        - Parking
+        - Web/CDP
+        - MCP/API
+        - UI/tray
+        - Docs
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This stays within the documented non-goals (no driver, cloud, telemetry, or cross-platform).
+          required: true

@@ -1,0 +1,45 @@
+## .NET
+bin/
+obj/
+artifacts/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+
+## Test / coverage
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+
+## Build outputs
+publish/
+*.nupkg
+*.snupkg
+
+## Spike / evidence outputs
+spike/out/
+/evidence/
+
+## Local runtime state
+*.log
+logs/
+profiles/
+state.json
+
+## OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.mimosa/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+## Local secrets
+.env
+*.pfx
+*.snk

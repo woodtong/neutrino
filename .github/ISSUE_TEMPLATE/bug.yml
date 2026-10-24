@@ -1,0 +1,66 @@
+name: Bug report
+description: Report a crash, wrong behavior, or a capture/input failure.
+title: "[bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not include secrets, private screenshots, or tokens.
+        For security issues use the private advisory link in SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: GhostScreen version / commit
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows build and display scaling
+      placeholder: "e.g. Windows 11 26200, 2560x1600 @150%"
+    validations:
+      required: true
+  - type: input
+    id: app
+    attributes:
+      label: Target app and version
+      placeholder: "e.g. Notepad, VS Code 1.xx, Chrome 1xx"
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs / trace / screenshots
+      description: Redact personal data. `gs doctor --bundle` output is preferred.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Capture
+        - Input
+        - Parking
+        - Web/CDP
+        - MCP/API
+        - UI/tray
+        - Docs
+        - Other
+    validations:
+      required: true

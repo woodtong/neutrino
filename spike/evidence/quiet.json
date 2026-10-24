@@ -1,0 +1,16 @@
+{
+  "quiet": true,
+  "humanInput": true,
+  "foregroundOk": true,
+  "cursorOk": true,
+  "clipboardOk": true,
+  "pass": false,
+  "uiaOk": true,
+  "printWindowHashes": [
+    "EB1FCD03EA13468B",
+    "DAADE7047A27FF7A",
+    "F99A41FC21CAB1DD"
+  ],
+  "before": "foreground=0x2088C cursor=(1125,1234) clipboardSeq=272 lastInput=54309515",
+  "after": "foreground=0x2088C cursor=(1125,1234) clipboardSeq=272 lastInput=54321218"
+}

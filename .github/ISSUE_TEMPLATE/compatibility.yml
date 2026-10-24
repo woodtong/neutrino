@@ -1,0 +1,68 @@
+name: App compatibility
+description: Report whether a specific Windows app works with capture/observe/input.
+title: "[compat] "
+labels: [compatibility]
+body:
+  - type: input
+    id: app
+    attributes:
+      label: App name and version
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows build and display scaling
+    validations:
+      required: true
+  - type: dropdown
+    id: capture
+    attributes:
+      label: Capture result
+      options:
+        - WGC live
+        - PrintWindow live
+        - Stale or blank
+        - Failed
+        - Not tested
+    validations:
+      required: true
+  - type: dropdown
+    id: observe
+    attributes:
+      label: Observation result
+      options:
+        - UIA tree usable
+        - DOM/CDP usable
+        - Partial
+        - Failed
+        - Not tested
+    validations:
+      required: true
+  - type: dropdown
+    id: input
+    attributes:
+      label: Input result
+      options:
+        - UIA works without focus
+        - Window messages work
+        - CDP works
+        - Requires interactive/focus input
+        - Failed
+        - Not tested
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes and evidence
+      description: What worked, what degraded, and why. Do not include secrets.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I verified the app was not minimized, hidden, cloaked, or DRM-protected.
+          required: true
+        - label: I removed personal data from logs/screenshots.
+          required: true

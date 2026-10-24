@@ -1,0 +1,28 @@
+{
+  "ok": true,
+  "target": {
+    "handle": "0x7915AC",
+    "pid": 50960,
+    "process": "FixtureApp",
+    "title": "GhostScreen Fixture",
+    "movedFrom": "(120,120 702x476)",
+    "parkedAt": "(2624,120 702x476)"
+  },
+  "capture": {
+    "backend": "printwindow",
+    "width": 680,
+    "height": 420,
+    "stable": false,
+    "blank": false,
+    "hash": "A48FC3F9483A57D2",
+    "capturedAtUnixMs": 1792773591635,
+    "window": "(2624,120 702x476)",
+    "client": "(2635,165 680x420)",
+    "clientOrigin": {
+      "x": 0,
+      "y": 0
+    },
+    "dpi": 150
+  },
+  "file": "E:\\software_code\\Visual_Stdio_Code\\WindowsForAgent\\spike\\out\\cli-shot.png"
+}

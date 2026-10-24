@@ -1,0 +1,16 @@
+{
+  "display": {
+    "virtualScreen": "(0,0 2560x1600)",
+    "primaryMonitor": "(0,0 2560x1600)"
+  },
+  "system": {
+    "foreground": "210FE0",
+    "foregroundWindow": "0x210FE0 pid=15552 ZCode \u0022ZCode\u0022 class=Chrome_WidgetWin_1 bounds=(-11,-11 2582x1550) visible=True min=False cloak=False tool=False dpi=150% protected=False",
+    "cursor": {
+      "x": 1085,
+      "y": 1033
+    },
+    "clipboardSequence": 286,
+    "lastInputTick": 55521421
+  }
+}

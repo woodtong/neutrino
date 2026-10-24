@@ -1,0 +1,70 @@
+{
+  "dpiAware": true,
+  "visibleStart": false,
+  "forceRepaint": true,
+  "sliver": false,
+  "display": {
+    "virtualScreen": "(0,0 2560x1600)",
+    "primary": "(0,0 2560x1600)"
+  },
+  "stateBefore": "foreground=0x210FE0 cursor=(1232,931) clipboardSeq=272 lastInput=52389109",
+  "stateAfterPark": "foreground=0x210FE0 cursor=(1185,1413) clipboardSeq=272 lastInput=52391828",
+  "stateAfterClose": "foreground=0x210FE0 cursor=(1199,1393) clipboardSeq=272 lastInput=52397687",
+  "foregroundUnchanged": true,
+  "humanInputDetected": true,
+  "lastInputTicks": {
+    "before": 52389109,
+    "afterPark": 52391828,
+    "afterClose": 52397687
+  },
+  "cursorUnchanged": false,
+  "clipboardUnchanged": true,
+  "parked": {
+    "bounds": "(2624,120 702x476)",
+    "fullyOffscreen": true,
+    "visible": true,
+    "minimized": false,
+    "cloaked": false
+  },
+  "marker": {
+    "onPhysicalScreenWhileParked": 0,
+    "inWgcFrame": 0
+  },
+  "wgc": {
+    "frames": 20,
+    "uniqueHashes": 1,
+    "blankFrames": 0,
+    "errors": [],
+    "first": {
+      "Width": 684,
+      "Height": 467,
+      "Hash": "BCBCB2BC14664404"
+    }
+  },
+  "printWindow": {
+    "ok": true,
+    "error": null,
+    "blank": false,
+    "hash": "2EA7F8D797A1DB31",
+    "uniqueHashesOver8Pulls": 8,
+    "p50Ms": 11.8664,
+    "p95Ms": 13.0234
+  },
+  "uia": {
+    "count": 17,
+    "buttonInvoked": true,
+    "buttonError": "",
+    "statusAfterUia": "status: clicked 1",
+    "valueSet": true,
+    "valueError": "",
+    "inputAfterUia": "uia \u4E16\u754C",
+    "foregroundUnchanged": true,
+    "restoreRequested": true
+  },
+  "messageInput": {
+    "click": true,
+    "statusAfterMessage": "status: clicked 2",
+    "setText": true,
+    "inputAfterMessage": "msg 123"
+  }
+}
