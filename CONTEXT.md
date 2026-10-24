@@ -75,7 +75,7 @@ spike/                      P0/P1-11/P1-CLI/P1-12/P2-MCP 报告与证据
 - 0.4.0-beta 包：`artifacts/GhostScreen-0.4.0-beta-win-x64.zip`（172 MB，SHA256 `1A87DC63...FCBC225`）；发布版冒烟（21 工具 + open_web + close_all + 状态页 + tray）
 - 关闭 web target 后 Edge 进程退出、`%LOCALAPPDATA%\GhostScreen\web-profiles` 为空
 - 状态端点：MCP 启动后 stderr 打印 URL；`%LOCALAPPDATA%\GhostScreen\status.json` 含 url/token/port/pid，退出删除；状态页含 target 卡片与 5s 刷新缩略图（`/api/screenshot`）
-- 本地提交 `fc06d29`；GitHub 远端待 `gh auth login` 后创建
+- 本地提交 `fc06d29` + `ac352f3`；GitHub 远端待 `gh auth login` 后创建
 
 ## 5. 已知限制
 
