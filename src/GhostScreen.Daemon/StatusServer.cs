@@ -207,6 +207,41 @@ public sealed class StatusServer : IDisposable
             return;
         }
 
+        if (request.Method == "POST" && request.Path == "/api/consent")
+        {
+            var consentId = request.Query.TryGetValue("consent_id", out var idValue) ? idValue : null;
+            var decision = request.Query.TryGetValue("decision", out var decisionValue)
+                ? decisionValue
+                : null;
+
+            if (string.IsNullOrWhiteSpace(consentId) ||
+                (decision != "allow" && decision != "deny"))
+            {
+                await WriteAsync(
+                    stream,
+                    400,
+                    "application/json",
+                    "{\"error\":\"consent_id and decision=allow|deny required\"}")
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            var result = _manager.Consents.Decide(consentId, decision == "allow");
+            var status = result.Outcome == GateOutcome.Expired ? 404 : 200;
+            await WriteAsync(
+                stream,
+                status,
+                "application/json",
+                JsonSerializer.Serialize(new
+                {
+                    ok = result.Outcome is GateOutcome.Allowed or GateOutcome.Denied,
+                    consent_id = consentId,
+                    outcome = result.Outcome.ToString().ToLowerInvariant(),
+                    expires_at = result.ExpiresAt?.ToString("O"),
+                }, JsonOptions)).ConfigureAwait(false);
+            return;
+        }
+
         if (request.Method == "POST" && request.Path == "/api/panic")
         {
             var closed = _manager.List().Count;
@@ -240,6 +275,18 @@ public sealed class StatusServer : IDisposable
                 swept_profiles = recovery.SweptProfiles,
             },
             targets = _manager.List().Select(target => target.ToDto()).ToArray(),
+            consents = _manager.Consents.Pending().Select(consent => new
+            {
+                id = consent.Id,
+                target_id = consent.TargetId,
+                target_title = consent.TargetTitle,
+                action = consent.Action,
+                agent = consent.Agent,
+                created_at = consent.CreatedAt.ToString("O"),
+                expires_at = consent.ExpiresAt.ToString("O"),
+                remaining_ms = consent.RemainingMs,
+                status = consent.Status,
+            }).ToArray(),
         };
 
         return JsonSerializer.Serialize(payload, JsonOptions);
@@ -492,7 +539,7 @@ public sealed class StatusServer : IDisposable
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GhostScreen 状态</title>
+<title>中微子 状态</title>
 <style>
   :root { color-scheme: dark; }
   body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #11151c; color: #e6edf3; }
@@ -515,7 +562,7 @@ public sealed class StatusServer : IDisposable
 </head>
 <body>
 <header>
-  <h1>GhostScreen 状态</h1>
+  <h1>中微子 状态</h1>
   <span class="pill" id="version">—</span>
   <span class="pill" id="pid">pid —</span>
   <span class="muted" id="updated">等待刷新…</span>

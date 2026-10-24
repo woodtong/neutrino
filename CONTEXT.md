@@ -18,24 +18,24 @@
 - **网页：无头 Edge + CDP**（真正零窗口）。
 - **Electron（VS Code）：PrintWindow 只有 chrome；必须 CDP**。
 - **UWP（Calculator）：PrintWindow/UIA 完整，但启动抢焦点不稳定**；不能承诺无焦点。
-- **输入没有按窗口注入的官方 API**。分层：原生 HWND 窗口消息 → CDP → 无 HWND 时的 UIA 语义动作（自动执行并恢复前台；`strict_no_focus_steal=true` 可改为拒绝）→ 最后才 SendInput（未实现）。
-- 停泊加 `WS_EX_NOACTIVATE`/`TOOLWINDOW`；**UIA Invoke/SetValue/Toggle/Select 仍会抢前台**（`WS_EX_NOACTIVATE` 挡不住程序激活），所以原生动作默认走 HWND 消息；UIA 回退自动执行并由 `FocusGuard` 恢复，人类已切到第三个窗口时不抢回，恢复失败返回 `FOCUS_STOLEN`。Electron/UWP 仍可能短暂抢焦点。
+- **输入没有按窗口注入的官方 API**。分层：原生 HWND 窗口消息 → CDP → 无 HWND 时的 UIA 语义动作。默认 `strict`：人在用时先返回 `USER_ACTIVE`，3 次后弹协商窗，允许/15s 倒计时后 Agent 带 `consent_id` 重试；`balanced` 直接执行 + `FocusGuard`，`force` 不等待。
+- 停泊加 `WS_EX_NOACTIVATE`/`TOOLWINDOW`；**UIA Invoke/SetValue/Toggle/Select 仍会抢前台**（`WS_EX_NOACTIVATE` 挡不住程序激活），所以原生动作默认走 HWND 消息。UIA 在 strict 下由 Human Consent Gate 管理；balanced/force 下执行并由 `FocusGuard` 恢复，恢复失败返回 `FOCUS_STOLEN`。Electron/UWP 仍可能短暂抢焦点。
 - 默认截图**客户区裁剪**（`IncludeFrame=false`）；坐标 = 客户区像素。
 
 ## 3. 已实现
 
 ```
 src/GhostScreen.Core        Rect、CaptureMetadata、CaptureException、ProductInfo（版本）
-src/GhostScreen.Windows     窗口枚举、停泊/还原、崩溃恢复还原、状态快照、FocusGuard、DPI、P/Invoke
+src/GhostScreen.Windows     窗口枚举、停泊/还原、崩溃恢复还原、状态快照、FocusGuard、HumanActivity、DPI、P/Invoke
 src/GhostScreen.Capture     PrintWindow（6s 超时/专用线程）、WGC、CaptureEngine（稳定性/裁剪/元数据）、PNG
 src/GhostScreen.Input       UIA 观测；窗口消息 click/scroll/drag/key/set_text（HWND 子控件）
 src/GhostScreen.Web         EdgeLauncher（无头 Edge/临时 profile/DevToolsActivePort）、CDP 客户端、CdpKeys、PNG 尺寸
-src/GhostScreen.Daemon      ITarget/TargetManager、TargetSession（原生/消息优先）、WebTargetSession、InputRouter、TargetJournal、StatusServer
+src/GhostScreen.Daemon      ITarget/TargetManager、TargetSession（原生/消息优先）、ConsentManager、WebTargetSession、InputRouter、TargetJournal、StatusServer
 src/GhostScreen.Mcp         手写 MCP stdio，21 工具（异步）+ 状态端点启动
 src/GhostScreen.Cli         gs version/state/list/shot（一次性，原生）
-src/GhostScreen.Tray        NotifyIcon：状态轮询/per-target 列表与关闭/打开状态页/急停/退出（独立小进程）
+src/GhostScreen.Tray        NotifyIcon：状态轮询/per-target 列表与关闭/打开状态页/急停/退出 + 非激活协商窗（独立小进程）
 tests/FixtureApp            WinForms 夹具（按钮/输入框/列表/动画/拖拽/滚轮/品红标记）
-tests/GhostScreen.Tests     零依赖 runner：29/29（原生/web MCP、焦点不变量、WPF UIA 回退、外部 CDP、死目标、崩溃恢复、挂起降级、WGC 连续帧、DPI/DPI-unaware 修复、状态页/渲染、URL 安全）
+tests/GhostScreen.Tests     零依赖 runner：32/32（原生/web MCP、焦点不变量、WPF UIA 回退、ConsentManager/严格协商门、外部 CDP、死目标、崩溃恢复、挂起降级、WGC 连续帧、DPI/DPI-unaware 修复、状态页/渲染、URL 安全）
 tests/GhostScreen.WebStress 100 次 open/capture/close 泄漏压力
 spike/                      P0/P1-11/P1-CLI/P1-12/P2-MCP 报告与证据
 ```
@@ -45,7 +45,7 @@ spike/                      P0/P1-11/P1-CLI/P1-12/P2-MCP 报告与证据
 - attach_cdp 连接已有 Chromium/Electron 调试端口（VS Code），`external=true`，close 只 detach；外部进程死亡后 `TARGET_CLOSED`。
 - 原生 observe 返回 UIA epoch + ref；web observe 返回 DOM ref/selector/bounds(CSS px)。
 - web screenshot 支持 `full_page` / `clip`；`snapshot` 一次多视口并返回 `horizontal_overflow` + 越界元素；`network` 返回失败/4xx/5xx。
-- 原生 click/scroll/drag/key 是客户区窗口消息；WPF/UWP 单 HWND 的坐标 `click` 自动回退到 UIA `AtPoint`；`click_element`/`set_text` 先按 UIA bounds 解析 HWND 子控件并走消息，找不到 HWND 时自动走 UIA（Invoke/Toggle/SelectionItem/ExpandCollapse/ValuePattern）并恢复前台；`strict_no_focus_steal=true` 可改为拒绝；只有没有可执行 pattern 才返回 `ELEMENT_NOT_ACTIONABLE`。Chromium/Electron 被 InputRouter 拒绝（`INPUT_UNSUPPORTED`）。
+- 原生 click/scroll/drag/key 是客户区窗口消息；WPF/UWP 单 HWND 的坐标 `click` 自动回退到 UIA `AtPoint`；`click_element`/`set_text` 先按 UIA bounds 解析 HWND 子控件并走消息，找不到 HWND 时走 UIA（Invoke/Toggle/SelectionItem/ExpandCollapse/ValuePattern）。默认 strict：人在用时返回 `USER_ACTIVE`/`AWAITING_USER`，Agent 带 `consent_id` 重试；只有没有可执行 pattern 才返回 `ELEMENT_NOT_ACTIONABLE`。Chromium/Electron 被 InputRouter 拒绝（`INPUT_UNSUPPORTED`）。
 - 原生元素动作返回 `focus: "not-needed" | "restored" | "stolen"`；`stolen` 时 MCP 以 `isError` 返回 `FOCUS_STOLEN` 警告。
 - web click/scroll/drag/key 全走 CDP；坐标是 CSS 像素；截图是设备像素。
 - 客户端配置见 `doc/08-MCP客户端配置.md`。
@@ -53,10 +53,11 @@ spike/                      P0/P1-11/P1-CLI/P1-12/P2-MCP 报告与证据
 ## 4. 当前验证
 
 - `dotnet build GhostScreen.sln -c Release`：0 warning / 0 error（源码 `0.4.1-dev`）
-- `dotnet run --project tests/GhostScreen.Tests -c Release`：**29/29**（WGC 与 WPF UIA 测试默认 opt-in 跳过）
+- `dotnet run --project tests/GhostScreen.Tests -c Release`：**32/32**（WGC、WPF UIA、严格协商门测试默认 opt-in 跳过）
   - 原生 MCP 全链路；web MCP 全链路（真实 headless Edge：截图/整页/裁剪/observe/ref+坐标点击/中文输入/Ctrl+S/拖拽/滚动/console/network/390×844@2/snapshot+溢出/navigate/close）
   - **焦点安全**：`click_element`/`set_text` 走 HWND 消息（`strategy=message`），MCP 前后前台/光标/剪贴板不变（检测到人类输入时跳过该断言）；没有可执行 pattern 的元素返回 `ELEMENT_NOT_ACTIONABLE`
   - **WPF UIA 回退**（`GHOSTSCREEN_UIA_TESTS=1`）：按钮 Invoke、文本框 ValuePattern、复选框 Toggle、列表项 SelectionItem 均执行成功，`FocusGuard` 把前台恢复；Label 返回 `ELEMENT_NOT_ACTIONABLE`
+  - **严格协商门**（`GHOSTSCREEN_UIA_TESTS=1`）：固定“用户活跃”探针下，前两次 `USER_ACTIVE`、第三次 `AWAITING_USER`；status 端点暴露 pending consent，允许后带 `consent_id` 执行；拒绝后 `USER_DENIED` 且不执行
   - 外部 CDP attach（连接、导航、截图、detach 不杀浏览器）；死窗口/被杀浏览器安全关闭；WGC 8 帧 ≥4 个哈希（默认 `SKIP`，需 `GHOSTSCREEN_VISIBLE_TESTS=1`）
   - 崩溃恢复：窗口还原、journal 模拟崩溃、孤儿 Edge 清理；挂起：真实 10s 挂起被 IsHungAppWindow 拒绝、attach 拒绝、2 次超时→TARGET_HUNG→快速失败
   - DPI-unaware：unaware 线程夹具，捕获尺寸 == 物理客户区，黑像素 <10%
@@ -74,12 +75,12 @@ spike/                      P0/P1-11/P1-CLI/P1-12/P2-MCP 报告与证据
 - 0.4.0-beta 包：`artifacts/GhostScreen-0.4.0-beta-win-x64.zip`（172 MB，SHA256 `1A87DC63...FCBC225`）；发布版冒烟（21 工具 + open_web + close_all + 状态页 + tray）
 - 关闭 web target 后 Edge 进程退出、`%LOCALAPPDATA%\GhostScreen\web-profiles` 为空
 - 状态端点：MCP 启动后 stderr 打印 URL；`%LOCALAPPDATA%\GhostScreen\status.json` 含 url/token/port/pid，退出删除；状态页含 target 卡片与 5s 刷新缩略图（`/api/screenshot`）
-- 未 commit
+- 本地提交 `fc06d29`；GitHub 远端待 `gh auth login` 后创建
 
 ## 5. 已知限制
 
-- 原生元素动作只对 **HWND 子控件**能保证零激活；WPF/UWP/自绘控件没有子 HWND，UIA 回退会短暂激活目标，再由 `FocusGuard` 恢复。WPF 实测 Invoke/SetValue/Toggle/Select 都会激活；不激活的窗口消息无法触发 WPF 按钮/输入。因此不能承诺 100% 不打断；`strict_no_focus_steal=true` 可选择拒绝。
-- UIA 回退不再因用户活跃而拒绝；代价是 WPF/UWP 动作可能造成短暂焦点切换。需要绝对零激活时用 `strict_no_focus_steal=true`，代价是代理会收到 `FOCUS_STEAL_NOT_ALLOWED`。
+- 原生元素动作只对 **HWND 子控件**能保证零激活；WPF/UWP/自绘控件没有子 HWND，UIA 动作会短暂激活目标。strict 默认通过协商门控制；`balanced`/`force` 仍可能短暂打断。
+- strict 的协商窗依赖托盘进程；托盘未运行时服务器仍会在 15s 后自动放行，但没有可视提示。多 Agent 排队、允许 5 分钟、锁屏处理仍待做。
 - 键盘是消息级，复杂 IME/快捷键需应用级验证。
 - 没有独立 daemon/HTTP/多客户端；MCP 单进程；崩溃后靠下次启动恢复（已实现），独立 watchdog 未做。
 - 状态页跟随 MCP 进程，MCP 退出/崩溃即失效；缩略图 0.2fps（无连续帧/SSE）；token 在 URL 中，仅本机使用。
@@ -95,7 +96,7 @@ spike/                      P0/P1-11/P1-CLI/P1-12/P2-MCP 报告与证据
 
 ## 6. 下一步顺序
 
-1. 真实 UWP 夹具验证 UIA 回退 + `FocusGuard`；WPF 已验证（Invoke/Toggle/SelectionItem/ValuePattern 均执行并恢复前台）。
+1. 真实 UWP 夹具验证 UIA 回退 + 协商门；WPF 已验证（Invoke/Toggle/SelectionItem/ValuePattern 均执行并恢复前台）。
 2. 24h soak（`--minutes 1440`）+ 4 target/混沌（杀进程、最小化、切桌面、断网）。
 3. P4-04 硬件受限项：第二块屏/混合 DPI 实测、锁屏/唤醒；DPI-unaware 已修复单屏。
 4. 托盘 per-target 列表/暂停恢复；状态页 2–5fps（按需）。

@@ -6,7 +6,7 @@
 
 应用窗口在系统里照常真实渲染，但不出现在人的显示器上。Agent 可以随时截图、点击、输入；人继续自己的工作，不闪窗、不被抢焦点、不被抢鼠标。
 
-> 状态：**0.4.1-dev**（基于已发布的 0.4.0-beta；焦点安全修复与 WPF UIA 验证，未打包）。含崩溃恢复、挂起拒绝、DPI-unaware 修复、状态页/托盘（per-target 关闭）、`attach_cdp`（VS Code/Electron）、soak harness 与 unsigned 安装脚本；MCP **21 工具**，测试 **29/29**。产品仍早期。
+> 状态：**0.5.0-dev**（基于已发布的 0.4.0-beta；焦点安全 + Human Consent Gate，未打包）。含崩溃恢复、挂起拒绝、DPI-unaware 修复、状态页/托盘（per-target 关闭 + 协商窗）、`attach_cdp`（VS Code/Electron）、soak harness 与 unsigned 安装脚本；MCP **21 工具**，测试 **32/32**。产品仍早期。
 > 关键实测：WGC 对完全离屏窗口会冻结；PrintWindow 离屏实时（p50≈12ms）。架构已改为 **PrintWindow 主捕获 + WGC 可见/VDD + CDP 网页**。
 > 定位：**开源项目（Apache-2.0）**，不做商业产品；工程质量、兼容性、可维护性优先。执行计划见 [07-开源项目规划](doc/07-开源项目规划.md)。
 > 工作名可改，不影响设计。
@@ -17,7 +17,8 @@
 - ✅ **P0**：PrintWindow 离屏实时：FixtureApp 8/8 帧变化（帧号 39→49），p50≈12ms；Notepad 完整捕获并写入中文。
 - ✅ **P0**：WGC 仅可见时实时（10/10 帧）；离屏 1/20（冻结），1px 露出无效。
 - ✅ **P1/P2**：原生元素动作**消息优先**（HWND 子控件 `BM_CLICK`/`WM_SETTEXT`）；没有 HWND 的 WPF/UWP 控件自动走 UIA（Invoke/Toggle/SelectionItem/ExpandCollapse）并恢复前台；只有控件完全没有可执行 pattern 时才返回 `ELEMENT_NOT_ACTIONABLE`。
-- ✅ **P4（0.4.1-dev）**：焦点安全修复——UIA 动作即使窗口带 `WS_EX_NOACTIVATE` 也会短暂激活；默认执行并由 `FocusGuard` 恢复前台，`strict_no_focus_steal=true` 可选择拒绝；测试夹具默认屏外创建。
+- ✅ **P4（0.4.1-dev）**：焦点安全修复——UIA 动作即使窗口带 `WS_EX_NOACTIVATE` 也会短暂激活；消息优先，UIA 由 `FocusGuard` 恢复前台。
+- ✅ **P4（0.5.0-dev）**：Human Consent Gate——默认 `strict`；人在用时 UIA 动作先返回可重试的 `USER_ACTIVE`，3 次后弹非激活协商窗（允许/拒绝/15 秒倒计时），Agent 带 `consent_id` 重试执行；消息/CDP 路径永不被门禁阻塞。
 - ✅ **P2**：TargetManager + MCP stdio（20 工具）；截图默认客户区裁剪；EOF 自动还原；in-process 测试。
 - ✅ **P3**：`open_web` 启动私有**无头 Edge**（无窗口、独立临时 profile）；截图/observe/点击/输入/按键/滚动/拖拽/console/视口/导航全部经 CDP；关 target 即杀进程并删 profile。
 - ✅ **P3**：整页截图与 clip、network idle、多视口 `snapshot`（横向溢出 + 越界元素定位）、`network` 失败诊断；100 次开关 0 失败、句柄/内存封顶、profile 0。
@@ -70,6 +71,7 @@ dotnet build src/GhostScreen.Cli -c Release
 
 **原生窗口**：`list_windows → attach_window (confirm=true) → screenshot / observe / click / click_element / scroll / drag / key / set_text → close_target / close_all`。
 截图返回 PNG image content + 元数据；默认客户区裁剪；EOF 自动还原所有窗口。
+原生元素动作默认 strict：人在用电脑时返回 `USER_ACTIVE`（按 `retry_after_ms` 重试）；3 次后返回 `AWAITING_USER` + `consent_id`，托盘弹出非激活协商窗（允许/拒绝/15 秒倒计时）；允许后带 `consent_id` 重试同一动作。窗口消息/CDP 路径不受门禁影响。
 
 **网页**：`open_web { url, width, height, device_scale_factor }`（或 `attach_cdp { port }` 连接已有 Edge/Electron 调试端口）`→ screenshot (可 full_page/clip) / snapshot / observe / click / click_element / set_text / key / scroll / drag → navigate / viewport / console / network / get_html → close_target`。
 
@@ -96,6 +98,7 @@ dotnet format GhostScreen.sln --verify-no-changes
   `GHOSTSCREEN_VISIBLE_TESTS=1 dotnet run --project tests/GhostScreen.Tests -c Release`
 - WPF 的 UIA 回退必须短暂激活目标窗口（随后恢复前台），因此那条测试也默认跳过；显式跑会短暂改变前台焦点：
   `GHOSTSCREEN_UIA_TESTS=1 dotnet run --project tests/GhostScreen.Tests -c Release`
+- 该开关也会运行严格协商门集成测试（WPF 夹具 + 固定“用户活跃”探针；会短暂改变前台焦点）。
 - 测试结束会断言：测试进程没有留下任何与虚拟屏相交的窗口。
 
 ## 发布包（最新：0.4.0-beta；源码 0.4.1-dev 未打包）
@@ -125,7 +128,7 @@ powershell -ExecutionPolicy Bypass -File scripts/publish.ps1
 
 1. **停泊**：把 Agent 的窗口移到所有物理显示器之外，但保持"显示/非最小化"状态，让 DWM 继续合成它。
 2. **分层捕获**：离屏原生窗口用 PrintWindow（实测实时）；可见/VDD 用 WGC；网页目标直接用无头 Edge + CDP（真正零窗口）。
-3. **分层输入（执行优先，拒绝兜底）**：原生 HWND 窗口消息 → CDP → 无 HWND 时的 UIA 语义动作（Invoke/Toggle/SelectionItem/ExpandCollapse/ValuePattern，执行后自动恢复前台）→ 最后才是有侵入性的 SendInput（未实现，需显式授权）。
+3. **分层输入（严格默认 + 人工协商）**：原生 HWND 窗口消息 → CDP → 无 HWND 时的 UIA 语义动作；UIA 在人在用时先返回可重试错误，3 次后弹非激活协商窗，允许/倒计时后 Agent 带 `consent_id` 重试。最后才是有侵入性的 SendInput（未实现，需显式授权）。
 4. **统一接口**：MCP 工具 + 本地 HTTP/WS；每个 target 上报自己的能力与降级原因。
 5. **人类优先**：不抢焦点、不动光标、不碰剪贴板；有托盘指示、审计日志与一键急停。
 

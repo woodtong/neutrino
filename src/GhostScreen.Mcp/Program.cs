@@ -8,7 +8,7 @@ using GhostScreen.Web;
 using GhostScreen.Windows;
 
 DpiAwareness.EnablePerMonitorV2();
-using var manager = new TargetManager();
+using var manager = new TargetManager(policy: InteractionPolicyExtensions.FromEnvironment());
 
 if (!manager.LastRecovery.IsEmpty)
 {
@@ -141,7 +141,7 @@ public sealed class McpServer
             }
             catch (TargetException ex)
             {
-                await WriteResultAsync(id, ErrorResult(ex.Code, ex.Message));
+                await WriteResultAsync(id, ErrorResult(ex));
             }
             catch (CaptureException ex)
             {
@@ -162,12 +162,25 @@ public sealed class McpServer
         }
     }
 
-    private static object Initialize(JsonElement parameters)
+    private object Initialize(JsonElement parameters)
     {
         var requested = parameters.ValueKind == JsonValueKind.Object &&
                         parameters.TryGetProperty("protocolVersion", out var version)
             ? version.GetString()
             : null;
+
+        if (parameters.ValueKind == JsonValueKind.Object &&
+            parameters.TryGetProperty("clientInfo", out var clientInfo) &&
+            clientInfo.ValueKind == JsonValueKind.Object &&
+            clientInfo.TryGetProperty("name", out var clientName) &&
+            clientName.ValueKind == JsonValueKind.String)
+        {
+            var name = clientName.GetString();
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                _manager.Consents.AgentName = name;
+            }
+        }
 
         return new
         {
@@ -182,7 +195,11 @@ public sealed class McpServer
                 version = ProductInfo.Version,
             },
             instructions =
-                "Local screen isolation for agents. Native apps: attach_window (confirm=true) then screenshot/observe/click. Web: open_web with a URL (private headless Edge, no window). Targets are restored/closed on close_target, close_all, or EOF. Nothing is sent to the cloud.",
+                "Local screen isolation for agents. Native apps: attach_window (confirm=true) then screenshot/observe/click. " +
+                "HWND-backed controls use window messages; WPF/UWP controls use UIA. In strict mode (default), a focus-requiring " +
+                "UIA action returns USER_ACTIVE while a human is using the desktop; retry with backoff. After several attempts the " +
+                "server returns AWAITING_USER with a consent_id and shows a non-activating prompt; retry with that consent_id. " +
+                "USER_DENIED is terminal for that request. Nothing is sent to the cloud.",
         };
     }
 
@@ -535,7 +552,8 @@ public sealed class McpServer
         }
 
         var strictNoFocusSteal = GetBool(args, "strict_no_focus_steal", false);
-        var pointResult = ((TargetSession)target).ClickPoint(x, y, strictNoFocusSteal);
+        var consentId = GetString(args, "consent_id");
+        var pointResult = ((TargetSession)target).ClickPoint(x, y, strictNoFocusSteal, consentId);
         return NativeResult(pointResult, "client");
     }
 
@@ -564,10 +582,11 @@ public sealed class McpServer
 
         var session = (TargetSession)target;
         var strictNoFocusSteal = GetBool(args, "strict_no_focus_steal", false);
+        var consentId = GetString(args, "consent_id");
 
         if (!string.IsNullOrWhiteSpace(reference))
         {
-            var okRef = session.ClickRef(reference, strictNoFocusSteal);
+            var okRef = session.ClickRef(reference, strictNoFocusSteal, consentId);
             return NativeResult(okRef);
         }
 
@@ -576,7 +595,7 @@ public sealed class McpServer
             return ErrorResult("INVALID_ARGUMENTS", "click_element requires ref or name.");
         }
 
-        var ok = session.ClickElement(name, strictNoFocusSteal);
+        var ok = session.ClickElement(name, strictNoFocusSteal, consentId);
         return NativeResult(ok);
     }
 
@@ -691,7 +710,8 @@ public sealed class McpServer
         }
 
         var strictNoFocusSteal = GetBool(args, "strict_no_focus_steal", false);
-        var ok = ((TargetSession)target).SetText(automationId, text, strictNoFocusSteal);
+        var consentId = GetString(args, "consent_id");
+        var ok = ((TargetSession)target).SetText(automationId, text, strictNoFocusSteal, consentId);
         return NativeResult(ok);
     }
 
@@ -917,7 +937,8 @@ public sealed class McpServer
                 ("target_id", "string", "Target id."),
                 ("x", "integer", "Client/CSS X."),
                 ("y", "integer", "Client/CSS Y."),
-                ("strict_no_focus_steal", "boolean", "Refuse instead of using the UIA hit-test fallback. Default false: execute and restore focus.")),
+                ("strict_no_focus_steal", "boolean", "Refuse instead of using the UIA hit-test fallback. Default false: execute and restore focus."),
+                ("consent_id", "string", "Consent ticket from AWAITING_USER; retry the same action with it after the human allows or the countdown expires.")),
             ["target_id", "x", "y"]),
         Tool(
             "click_element",
@@ -926,7 +947,8 @@ public sealed class McpServer
                 ("target_id", "string", "Target id."),
                 ("ref", "string", "Element ref from the latest observe, e.g. e1."),
                 ("name", "string", "Accessible name for native targets; visible text for web targets."),
-                ("strict_no_focus_steal", "boolean", "Refuse instead of using the UIA fallback (which briefly activates the target). Default false: execute and restore focus.")),
+                ("strict_no_focus_steal", "boolean", "Refuse instead of using the UIA fallback (which briefly activates the target). Default false: execute and restore focus."),
+                ("consent_id", "string", "Consent ticket from AWAITING_USER; retry the same action with it after the human allows or the countdown expires.")),
             ["target_id"]),
         Tool(
             "scroll",
@@ -963,7 +985,8 @@ public sealed class McpServer
                 ("automation_id", "string", "Native AutomationId, e.g. 'txtInput'."),
                 ("ref", "string", "Web element ref from observe, e.g. e2."),
                 ("text", "string", "New value."),
-                ("strict_no_focus_steal", "boolean", "Refuse instead of using the UIA fallback (which briefly activates the target). Default false: execute and restore focus.")),
+                ("strict_no_focus_steal", "boolean", "Refuse instead of using the UIA fallback (which briefly activates the target). Default false: execute and restore focus."),
+                ("consent_id", "string", "Consent ticket from AWAITING_USER; retry the same action with it after the human allows or the countdown expires.")),
             ["target_id", "text"]),
         Tool(
             "navigate",
@@ -1085,6 +1108,54 @@ public sealed class McpServer
         },
         isError = true,
     };
+
+    private static object ErrorResult(TargetException ex)
+    {
+        var error = new Dictionary<string, object?>
+        {
+            ["code"] = ex.Code,
+            ["message"] = ex.Message,
+        };
+
+        if (ex.Retryable)
+        {
+            error["retryable"] = true;
+        }
+
+        if (ex.RetryAfterMs is not null)
+        {
+            error["retry_after_ms"] = ex.RetryAfterMs.Value;
+        }
+
+        if (ex.Attempts is not null)
+        {
+            error["attempts"] = ex.Attempts.Value;
+        }
+
+        if (ex.MaxAttempts is not null)
+        {
+            error["max_attempts"] = ex.MaxAttempts.Value;
+        }
+
+        if (!string.IsNullOrWhiteSpace(ex.ConsentId))
+        {
+            error["consent_id"] = ex.ConsentId;
+        }
+
+        if (ex.ExpiresAt is not null)
+        {
+            error["expires_at"] = ex.ExpiresAt.Value.ToString("O");
+        }
+
+        return new
+        {
+            content = new object[]
+            {
+                Text(JsonSerializer.Serialize(new { error }, JsonOptions)),
+            },
+            isError = true,
+        };
+    }
 
     private static object Text(string text) => new { type = "text", text };
 

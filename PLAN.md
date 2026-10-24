@@ -17,9 +17,9 @@
 
 | 项 | 值 |
 |---|---|
-| 当前阶段 | **P4（0.4.1-dev：焦点安全修复、WPF/UWP 回退待验证）** |
-| 代码状态 | MCP stdio **21 工具** + 状态端点 + 托盘；`0.4.1-dev`；测试 29/29（含焦点不变量与 WPF UIA 回退） |
-| 下一动作 | **UWP UIA 回退实测；24h/4-target/混沌 soak；P4-04 混合 DPI/双屏/锁屏；daemon/多客户端；干净机器验证** |
+| 当前阶段 | **P4（0.5.0-dev：Human Consent Gate、UWP 回退待验证）** |
+| 代码状态 | MCP stdio **21 工具** + 状态端点 + 托盘协商窗；`0.5.0-dev`；测试 32/32（焦点不变量、WPF UIA、严格协商门） |
+| 下一动作 | **UWP 协商门实测；多 Agent 排队/允许 5 分钟；24h/4-target/混沌 soak；P4-04 混合 DPI/双屏/锁屏；干净机器验证** |
 | 阻塞 | 混合 DPI 需要第二块屏或 VDD；24h soak 需要长时间后台 |
 | 最近更新 | 2026-10-24 |
 
@@ -240,9 +240,16 @@
   - 测试夹具默认屏外创建；WGC 可见测试需 `GHOSTSCREEN_VISIBLE_TESTS=1`；WPF UIA 测试需 `GHOSTSCREEN_UIA_TESTS=1`；测试结束断言无可见窗口泄漏。
   - 验收：MCP 消息路径前台/光标/剪贴板不变；WPF Invoke/Toggle/SelectionItem/ValuePattern 均执行并恢复前台；29/29 绿。
 
+- [x] **P2-12 Human Consent Gate（0.5.0-dev）**（1.0d）：默认 strict，UIA 动作先问人。
+  - `ConsentManager`：按 target/action/element 计数，3 次后创建 consent；15s 自动放行、30s 票有效期、一次性消费、绑定具体动作。
+  - MCP：`USER_ACTIVE`（retryable + attempts/max_attempts/retry_after_ms）、`AWAITING_USER`（consent_id/expires_at）、`USER_DENIED`、`CONSENT_EXPIRED`；`click_element`/`set_text`/`click` 接受 `consent_id`。
+  - 托盘：非激活小窗，允许/拒绝 + 15s 倒计时；状态端点暴露 pending consent，`POST /api/consent` 用 loopback token 决策。
+  - 消息/CDP 路径永不被门禁阻塞；`balanced`/`force` 可切换。
+  - 验收：32/32；WPF 严格门测试验证前两次 USER_ACTIVE、第三次 AWAITING_USER、允许后执行、拒绝后不执行。
+
 **Gate G2**
 - [ ] MCP 客户端完成「打开记事本→输入中文→截图确认」与「打开网页→截图→点击」。
-- [ ] 输入不变量通过；无焦点/光标漂移。— 0.4.1-dev 消息路径的 MCP 回合与 WPF UIA 回退已通过；UWP 待实测。
+- [ ] 输入不变量通过；无焦点/光标漂移。— 0.5.0-dev 消息路径、WPF UIA 回退与严格协商门已通过；UWP 待实测。
 - [ ] 错误有 code/hint；取消不残留。
 - [ ] v0.1 alpha 发布。
 
@@ -477,3 +484,4 @@
 | 2026-10-24 | v1.23 | 技术实现与限制报告（doc/16）：架构/实测结论/实现逻辑/验证证据/未完成项与所需支持 |
 | 2026-10-24 | v1.24 | 0.4.0-beta：DPI-unaware 捕获修复、托盘 per-target 列表/关闭、真实 VS Code attach、install.ps1；测试 28/28；5 分钟 4 目标 soak 0 失败；包 SHA256 1A87DC63…FCBC225 |
 | 2026-10-24 | v1.25 | 0.4.1-dev 焦点安全：UIA 动作会激活 WS_EX_NOACTIVATE 停泊窗口；原生元素动作改消息优先，无 HWND 时 UIA 自动执行 + FocusGuard 恢复（strict 可拒绝）；WPF 回退实测；测试夹具屏外、WGC/WPF 测试 opt-in；测试 29/29 |
+| 2026-10-24 | v1.26 | 0.5.0-dev Human Consent Gate：默认 strict；USER_ACTIVE/AWAITING_USER/USER_DENIED + consent_id；15s 倒计时非激活托盘窗；状态端点 consent；32/32 |

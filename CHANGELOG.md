@@ -3,6 +3,34 @@
 All notable changes are documented here. The format follows Keep a Changelog;
 the project aims to use Semantic Versioning once 1.0 ships.
 
+## [0.5.0-dev] - 2026-10-24
+
+Human Consent Gate (strict default): focus-requiring UIA actions now ask instead
+of silently stealing the human's foreground. Not packaged yet.
+
+- New `InteractionPolicy`: `strict` (default), `balanced`, `force`. Strict blocks
+  focus-requiring UIA actions while a human has produced input in the last 2s.
+  Window-message and CDP paths are never gated.
+- `click_element`, `set_text`, and `click` now return structured
+  `USER_ACTIVE` (retryable, attempts/max_attempts/retry_after_ms) after a
+  blocked attempt. After 3 attempts they create a consent request and return
+  `AWAITING_USER` with a one-time `consent_id` and `expires_at`.
+- A consent request is shown as a non-activating tray prompt with Allow/Deny and
+  a 15s countdown. The tray never takes focus. If nobody responds, the server
+  auto-authorizes at the countdown; the agent retries with `consent_id`.
+  `USER_DENIED` is terminal for that request; `CONSENT_EXPIRED` means request a
+  new one.
+- Consent tickets are bound to the exact target/action/element, one-time, and
+  expire 30s after authorization. The server only authorizes; the agent executes,
+  so stale actions are never replayed.
+- MCP clientInfo name is shown in the prompt; `instructions` now explain the
+  retry/consent protocol.
+- Status endpoint exposes pending consents and `POST /api/consent` with the
+  loopback token; `StatusClient` parses consents and decides them.
+- Tests: 32/32 default (ConsentManager unit tests); 32/32 with
+  `GHOSTSCREEN_UIA_TESTS=1` (WPF balanced execution + strict consent gate).
+- Version: 0.5.0-dev. The 0.4.0-beta artifact remains the published package.
+
 ## [0.4.1-dev] - 2026-10-24
 
 Focus-safety fix: native element actions no longer steal the foreground by

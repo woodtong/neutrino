@@ -571,7 +571,7 @@ var tests = new (string Name, Action Body)[]
             Assert(json.Contains("\"kind\":\"app\"", StringComparison.Ordinal), "status lists the kind");
 
             var html = http.GetStringAsync(status.Url).GetAwaiter().GetResult();
-            Assert(html.Contains("GhostScreen", StringComparison.Ordinal), "page renders");
+            Assert(html.Contains("中微子", StringComparison.Ordinal), "page renders");
             Assert(html.Contains("急停", StringComparison.Ordinal), "page has panic");
 
             var shotResponse = http
@@ -944,6 +944,58 @@ var tests = new (string Name, Action Body)[]
             }
         }
     }),
+    ("ConsentManager retries, auto-allows, and consumes once", () =>
+    {
+        var now = DateTimeOffset.UtcNow;
+        var consents = new ConsentManager(
+            () => now,
+            autoAllowAfter: TimeSpan.FromSeconds(15),
+            maxAttempts: 3);
+
+        var first = consents.Evaluate("t1", "Target", "click_element", "id:button");
+        Assert(first.Outcome == GateOutcome.Retry && first.Attempts == 1, "first attempt should retry");
+        var second = consents.Evaluate("t1", "Target", "click_element", "id:button");
+        Assert(second.Outcome == GateOutcome.Retry && second.Attempts == 2, "second attempt should retry");
+        var third = consents.Evaluate("t1", "Target", "click_element", "id:button");
+        Assert(third.Outcome == GateOutcome.AwaitingUser, "third attempt should request consent");
+        Assert(third.ConsentId is not null, "consent id");
+        Assert(consents.Pending().Count == 1, "one pending consent");
+
+        var pending = consents.Consume(third.ConsentId!, "t1", "click_element", "id:button");
+        Assert(pending.Outcome == GateOutcome.AwaitingUser, "consent still pending before countdown");
+
+        now = now.AddSeconds(15);
+        var allowed = consents.Consume(third.ConsentId!, "t1", "click_element", "id:button");
+        Assert(allowed.Outcome == GateOutcome.Allowed, "countdown should auto-allow");
+        var consumed = consents.Consume(third.ConsentId!, "t1", "click_element", "id:button");
+        Assert(consumed.Outcome == GateOutcome.Expired, "consent ticket must be one-time");
+    }),
+    ("ConsentManager deny and mismatch", () =>
+    {
+        var now = DateTimeOffset.UtcNow;
+        var consents = new ConsentManager(() => now, maxAttempts: 3);
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            consents.Evaluate("t1", "Target", "set_text", "id:input");
+        }
+
+        var pending = consents.Pending();
+        Assert(pending.Count == 1, "pending consent");
+        var denied = consents.Decide(pending[0].Id, allow: false);
+        Assert(denied.Outcome == GateOutcome.Denied, "deny decision");
+        var retry = consents.Consume(pending[0].Id, "t1", "set_text", "id:input");
+        Assert(retry.Outcome == GateOutcome.Denied, "denied ticket");
+        Assert(consents.Pending().Count == 0, "denied consent is not pending");
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            consents.Evaluate("t2", "Target", "click_element", "id:button");
+        }
+
+        var other = consents.Pending()[0];
+        var mismatch = consents.Consume(other.Id, "t2", "click_element", "id:different");
+        Assert(mismatch.Outcome == GateOutcome.Expired, "consent must bind to the exact element");
+    }),
     ("WPF UIA fallback executes and restores focus", () =>
     {
         if (!Environment.UserInteractive ||
@@ -968,7 +1020,7 @@ var tests = new (string Name, Action Body)[]
             return;
         }
 
-        using var manager = new TargetManager();
+        using var manager = new TargetManager(policy: InteractionPolicy.Balanced);
         try
         {
             var session = manager.Attach(fixture.Handle, confirm: true);
@@ -1030,6 +1082,117 @@ var tests = new (string Name, Action Body)[]
         {
             manager.CloseAll();
             fixture.Dispose();
+        }
+    }),
+    ("Strict consent gate blocks, prompts, and executes after approval", () =>
+    {
+        if (!Environment.UserInteractive ||
+            !System.Windows.Forms.SystemInformation.UserInteractive)
+        {
+            Console.WriteLine("SKIP consent gate: no interactive desktop.");
+            return;
+        }
+
+        if (Environment.GetEnvironmentVariable("GHOSTSCREEN_UIA_TESTS") != "1")
+        {
+            Console.WriteLine("SKIP consent gate: focus-stealing fallback test; set GHOSTSCREEN_UIA_TESTS=1 to run it.");
+            return;
+        }
+
+        var tempDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "ghostscreen-consent-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(tempDirectory);
+
+        using var fixture = new WpfFixture();
+        Thread.Sleep(300);
+        var before = SystemState.Capture();
+        if (before.ForegroundWindow == IntPtr.Zero)
+        {
+            Console.WriteLine("SKIP consent gate: no foreground window.");
+            return;
+        }
+
+        var consents = new ConsentManager();
+        using var manager = new TargetManager(
+            policy: InteractionPolicy.Strict,
+            humanActivity: new FixedHumanActivityProbe(active: true),
+            consents: consents);
+        using var status = new StatusServer(
+            manager,
+            0,
+            "consent-test-token",
+            Path.Combine(tempDirectory, "status.json"));
+        status.Start();
+        using var client = new StatusClient(new StatusEndpoint(status.Url, "consent-test-token"));
+
+        try
+        {
+            var session = manager.Attach(fixture.Handle, confirm: true);
+            Thread.Sleep(250);
+            var buttonRef = FindRef(session, element => element.AutomationId == "wpfButton", "wpfButton");
+
+            var first = AssertThrows<TargetException>(() => session.ClickRef(buttonRef));
+            Assert(first.Code == "USER_ACTIVE" && first.Retryable && first.Attempts == 1, $"first gate: {first.Code}");
+            var second = AssertThrows<TargetException>(() => session.ClickRef(buttonRef));
+            Assert(second.Code == "USER_ACTIVE" && second.Attempts == 2, $"second gate: {second.Code}");
+            var third = AssertThrows<TargetException>(() => session.ClickRef(buttonRef));
+            Assert(third.Code == "AWAITING_USER" && third.ConsentId is not null, $"third gate: {third.Code}");
+            Assert(fixture.Clicks == 0, "gate must not execute before consent");
+
+            var snapshot = client.GetStatusAsync().GetAwaiter().GetResult();
+            Assert(snapshot is not null && snapshot.Consents.Count == 1, "status exposes pending consent");
+            Assert(
+                snapshot!.Consents[0].Id == third.ConsentId,
+                "status consent id matches the gate response");
+
+            var stillPending = AssertThrows<TargetException>(
+                () => session.ClickRef(buttonRef, consentId: third.ConsentId!));
+            Assert(stillPending.Code == "AWAITING_USER", "pending ticket must not execute");
+
+            Assert(
+                client.DecideConsentAsync(third.ConsentId!, allow: true).GetAwaiter().GetResult(),
+                "allow consent through status endpoint");
+
+            var approved = session.ClickRef(buttonRef, consentId: third.ConsentId!);
+            Assert(approved.Ok && approved.Strategy == "uia", $"approved strategy={approved.Strategy}");
+            WaitUntil(() => fixture.Clicks == 1, "approved click was not dispatched");
+            AssertForeground(before.ForegroundWindow, "approved WPF click");
+
+            var checkRef = FindRef(session, element => element.AutomationId == "wpfCheck", "wpfCheck");
+            TargetException? deniedRequest = null;
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                deniedRequest = AssertThrows<TargetException>(() => session.ClickRef(checkRef));
+            }
+
+            Assert(
+                deniedRequest is not null &&
+                deniedRequest.Code == "AWAITING_USER" &&
+                deniedRequest.ConsentId is not null,
+                $"checkbox gate: {deniedRequest?.Code}");
+            Assert(
+                manager.Consents.Decide(deniedRequest!.ConsentId!, allow: false).Outcome == GateOutcome.Denied,
+                "deny checkbox consent");
+            var denied = AssertThrows<TargetException>(
+                () => session.ClickRef(checkRef, consentId: deniedRequest.ConsentId!));
+            Assert(denied.Code == "USER_DENIED", $"checkbox denied: {denied.Code}");
+            Assert(!fixture.Checked, "denied action must not execute");
+        }
+        finally
+        {
+            manager.CloseAll();
+            fixture.Dispose();
+            status.Dispose();
+
+            try
+            {
+                Directory.Delete(tempDirectory, recursive: true);
+            }
+            catch
+            {
+                // Best effort.
+            }
         }
     }),
     ("MCP attach/capture/observe/act/close", RunMcpRoundTrip),

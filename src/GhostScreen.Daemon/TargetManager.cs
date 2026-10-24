@@ -15,6 +15,18 @@ public sealed class TargetException : Exception
     }
 
     public string Code { get; }
+
+    public bool Retryable { get; init; }
+
+    public int? RetryAfterMs { get; init; }
+
+    public int? Attempts { get; init; }
+
+    public int? MaxAttempts { get; init; }
+
+    public string? ConsentId { get; init; }
+
+    public DateTimeOffset? ExpiresAt { get; init; }
 }
 
 public sealed record UiaObservation(int Epoch, IReadOnlyList<UiaElement> Elements);
@@ -47,6 +59,10 @@ public sealed class TargetSession : ITarget
 {
     private readonly object _gate = new();
     private readonly ParkedWindow _parked;
+    private readonly ConsentManager _consents;
+    private readonly InteractionPolicy _policy;
+    private readonly IHumanActivityProbe _humanActivity;
+    private static readonly TimeSpan HumanActiveThreshold = TimeSpan.FromSeconds(2);
     private IReadOnlyList<UiaElement> _lastObservation = [];
     private int _epoch;
     private bool _closed;
@@ -54,11 +70,20 @@ public sealed class TargetSession : ITarget
     private string? _degradedReason;
     private Func<IntPtr, CaptureOptions, CaptureResult> _capture = CaptureEngine.Capture;
 
-    internal TargetSession(string id, WindowInfo info, ParkedWindow parked)
+    internal TargetSession(
+        string id,
+        WindowInfo info,
+        ParkedWindow parked,
+        ConsentManager consents,
+        InteractionPolicy policy,
+        IHumanActivityProbe humanActivity)
     {
         Id = id;
         Info = info;
         _parked = parked;
+        _consents = consents;
+        _policy = policy;
+        _humanActivity = humanActivity;
         CreatedAt = DateTimeOffset.UtcNow;
         LastUsed = CreatedAt;
     }
@@ -121,20 +146,26 @@ public sealed class TargetSession : ITarget
         }
     }
 
-    public NativeActionResult ClickElement(string name, bool strictNoFocusSteal = false)
+    public NativeActionResult ClickElement(
+        string name,
+        bool strictNoFocusSteal = false,
+        string? consentId = null)
     {
         lock (_gate)
         {
             EnsureOpen();
             var element = UiaDriver.FindByName(Info.Handle, name)
                 ?? throw new TargetException("ELEMENT_NOT_FOUND", $"UIA element not found: {name}");
-            var result = ClickElementCore(element, strictNoFocusSteal);
+            var result = ClickElementCore(element, strictNoFocusSteal, consentId);
             Touch();
             return result;
         }
     }
 
-    public NativeActionResult ClickRef(string reference, bool strictNoFocusSteal = false)
+    public NativeActionResult ClickRef(
+        string reference,
+        bool strictNoFocusSteal = false,
+        string? consentId = null)
     {
         lock (_gate)
         {
@@ -149,13 +180,16 @@ public sealed class TargetSession : ITarget
                     $"Ref '{reference}' is not in the latest observation (epoch {_epoch}); call observe again.");
             }
 
-            var result = ClickElementCore(element, strictNoFocusSteal);
+            var result = ClickElementCore(element, strictNoFocusSteal, consentId);
             Touch();
             return result;
         }
     }
 
-    private NativeActionResult ClickElementCore(UiaElement element, bool strictNoFocusSteal)
+    private NativeActionResult ClickElementCore(
+        UiaElement element,
+        bool strictNoFocusSteal,
+        string? consentId)
     {
         // Re-resolve the element so a layout change between observe and click
         // cannot send a message to a stale rectangle.
@@ -172,14 +206,14 @@ public sealed class TargetSession : ITarget
             return new NativeActionResult(true, "message", FocusRestoreStatus.NotNeeded);
         }
 
-        EnsureUiaAllowed(strictNoFocusSteal, "click_element");
-
         if (!HasActionPattern(fresh))
         {
             throw new TargetException(
                 "ELEMENT_NOT_ACTIONABLE",
                 $"Element '{fresh.Name}' ({fresh.AutomationId}) exposes no Invoke/Toggle/SelectionItem/ExpandCollapse pattern.");
         }
+
+        EnterUia("click_element", ElementKey(fresh), strictNoFocusSteal, consentId);
 
         using var guard = FocusGuard.Begin(Info.Handle);
         var ok = UiaDriver.Activate(Info.Handle, fresh);
@@ -196,6 +230,13 @@ public sealed class TargetSession : ITarget
     private static bool HasActionPattern(UiaElement element) =>
         element.Patterns.Any(pattern => pattern is "Invoke" or "Toggle" or "SelectionItem" or "ExpandCollapse");
 
+    private static string ElementKey(UiaElement element) =>
+        !string.IsNullOrWhiteSpace(element.AutomationId)
+            ? $"id:{element.AutomationId}"
+            : !string.IsNullOrWhiteSpace(element.Name)
+                ? $"name:{element.Name}"
+                : $"ref:{element.Ref}";
+
     private UiaElement ResolveFresh(UiaElement element)
     {
         var fresh = !string.IsNullOrWhiteSpace(element.AutomationId)
@@ -207,7 +248,11 @@ public sealed class TargetSession : ITarget
             $"Element '{element.Name}' ({element.AutomationId}) is no longer present; call observe again.");
     }
 
-    public NativeActionResult ClickPoint(int clientX, int clientY, bool strictNoFocusSteal = false)
+    public NativeActionResult ClickPoint(
+        int clientX,
+        int clientY,
+        bool strictNoFocusSteal = false,
+        string? consentId = null)
     {
         lock (_gate)
         {
@@ -228,7 +273,15 @@ public sealed class TargetSession : ITarget
             // have no child HWND to hit; resolve the element at the point via UIA.
             if (IsSingleSurface(Info.ClassName))
             {
-                EnsureUiaAllowed(strictNoFocusSteal, "click");
+                if (!UiaDriver.HasActionAtPoint(Info.Handle, screenX, screenY))
+                {
+                    throw new TargetException(
+                        "ELEMENT_NOT_ACTIONABLE",
+                        $"No actionable UIA element at client ({clientX},{clientY}) in {Info.ClassName}.");
+                }
+
+                EnterUia("click", $"point:{clientX},{clientY}", strictNoFocusSteal, consentId);
+
                 using var guard = FocusGuard.Begin(Info.Handle);
                 if (!UiaDriver.ActivateAtPoint(Info.Handle, screenX, screenY))
                 {
@@ -300,7 +353,11 @@ public sealed class TargetSession : ITarget
         }
     }
 
-    public NativeActionResult SetText(string automationId, string text, bool strictNoFocusSteal = false)
+    public NativeActionResult SetText(
+        string automationId,
+        string text,
+        bool strictNoFocusSteal = false,
+        string? consentId = null)
     {
         lock (_gate)
         {
@@ -321,14 +378,14 @@ public sealed class TargetSession : ITarget
                 return new NativeActionResult(true, "message", FocusRestoreStatus.NotNeeded);
             }
 
-            EnsureUiaAllowed(strictNoFocusSteal, "set_text");
-
             if (!element.Patterns.Contains("Value", StringComparer.Ordinal))
             {
                 throw new TargetException(
                     "ELEMENT_NOT_ACTIONABLE",
                     $"Element '{element.Name}' ({element.AutomationId}) does not expose ValuePattern.");
             }
+
+            EnterUia("set_text", $"id:{automationId}", strictNoFocusSteal, consentId);
 
             using var guard = FocusGuard.Begin(Info.Handle);
             var ok = UiaDriver.SetValue(Info.Handle, automationId, text);
@@ -337,7 +394,11 @@ public sealed class TargetSession : ITarget
         }
     }
 
-    private static void EnsureUiaAllowed(bool strictNoFocusSteal, string action)
+    private void EnterUia(
+        string action,
+        string elementKey,
+        bool strictNoFocusSteal,
+        string? consentId)
     {
         if (strictNoFocusSteal)
         {
@@ -345,6 +406,66 @@ public sealed class TargetSession : ITarget
                 "FOCUS_STEAL_NOT_ALLOWED",
                 $"{action} needs the UIA fallback, which briefly activates the target. " +
                 "strict_no_focus_steal=true refused it; set it to false to execute and restore focus.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(consentId))
+        {
+            ThrowIfBlocked(_consents.Consume(consentId, Id, action, elementKey));
+            return;
+        }
+
+        if (_policy != InteractionPolicy.Strict)
+        {
+            return;
+        }
+
+        if (!_humanActivity.IsActive(HumanActiveThreshold))
+        {
+            return;
+        }
+
+        ThrowIfBlocked(_consents.Evaluate(Id, Info.Title, action, elementKey));
+    }
+
+    private static void ThrowIfBlocked(ConsentGateResult result)
+    {
+        switch (result.Outcome)
+        {
+            case GateOutcome.Allowed:
+                return;
+            case GateOutcome.Retry:
+                throw new TargetException("USER_ACTIVE", result.Message ?? "Human is using the desktop.")
+                {
+                    Retryable = true,
+                    RetryAfterMs = result.RetryAfterMs,
+                    Attempts = result.Attempts,
+                    MaxAttempts = result.MaxAttempts,
+                };
+            case GateOutcome.AwaitingUser:
+                throw new TargetException("AWAITING_USER", result.Message ?? "Waiting for human consent.")
+                {
+                    Retryable = true,
+                    RetryAfterMs = result.RetryAfterMs,
+                    Attempts = result.Attempts,
+                    MaxAttempts = result.MaxAttempts,
+                    ConsentId = result.ConsentId,
+                    ExpiresAt = result.ExpiresAt,
+                };
+            case GateOutcome.Denied:
+                throw new TargetException("USER_DENIED", result.Message ?? "The human denied this action.")
+                {
+                    Attempts = result.Attempts,
+                    MaxAttempts = result.MaxAttempts,
+                    ConsentId = result.ConsentId,
+                };
+            default:
+                throw new TargetException("CONSENT_EXPIRED", result.Message ?? "The consent ticket expired.")
+                {
+                    Retryable = true,
+                    Attempts = result.Attempts,
+                    MaxAttempts = result.MaxAttempts,
+                    ConsentId = result.ConsentId,
+                };
         }
     }
 
@@ -436,12 +557,24 @@ public sealed class TargetManager : IDisposable
     private readonly object _sync = new();
     private readonly Dictionary<string, ITarget> _targets = new(StringComparer.Ordinal);
     private readonly TargetJournal _journal;
+    private readonly IHumanActivityProbe _humanActivity;
 
-    public TargetManager(TargetJournal? journal = null)
+    public TargetManager(
+        TargetJournal? journal = null,
+        InteractionPolicy policy = InteractionPolicy.Strict,
+        IHumanActivityProbe? humanActivity = null,
+        ConsentManager? consents = null)
     {
         _journal = journal ?? new TargetJournal();
+        _humanActivity = humanActivity ?? new LastInputHumanActivityProbe();
+        Policy = policy;
+        Consents = consents ?? new ConsentManager();
         LastRecovery = _journal.Recover();
     }
+
+    public InteractionPolicy Policy { get; }
+
+    public ConsentManager Consents { get; }
 
     /// <summary>What the crash journal restored/cleaned when this manager started.</summary>
     public RecoveryReport LastRecovery { get; }
@@ -481,7 +614,13 @@ public sealed class TargetManager : IDisposable
             WindowRepaint.Force(hwnd);
             var refreshed = WindowEnumerator.Describe(hwnd) ?? info;
             var id = "tgt_" + Guid.NewGuid().ToString("N")[..6];
-            var session = new TargetSession(id, refreshed, parked);
+            var session = new TargetSession(
+                id,
+                refreshed,
+                parked,
+                Consents,
+                Policy,
+                _humanActivity);
             _journal.RecordApp(id, session);
 
             lock (_sync)

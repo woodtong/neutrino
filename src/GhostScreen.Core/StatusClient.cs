@@ -12,13 +12,24 @@ public sealed record StatusTarget(
     string State,
     string? DegradedReason);
 
+public sealed record StatusConsent(
+    string Id,
+    string TargetId,
+    string TargetTitle,
+    string Action,
+    string Agent,
+    DateTimeOffset ExpiresAt,
+    long RemainingMs,
+    string Status);
+
 public sealed record StatusSnapshot(
     string Version,
     int Pid,
     long UptimeSeconds,
     int TargetCount,
     string RawJson,
-    IReadOnlyList<StatusTarget> Targets);
+    IReadOnlyList<StatusTarget> Targets,
+    IReadOnlyList<StatusConsent> Consents);
 
 public sealed record PanicResult(int Closed);
 
@@ -117,6 +128,31 @@ public sealed class StatusClient : IDisposable
                 }
             }
 
+            var consents = new List<StatusConsent>();
+            if (root.TryGetProperty("consents", out var consentsElement) &&
+                consentsElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var consent in consentsElement.EnumerateArray())
+                {
+                    var expiresText = consent.TryGetProperty("expires_at", out var expires)
+                        ? expires.GetString()
+                        : null;
+                    _ = DateTimeOffset.TryParse(expiresText, out var expiresAt);
+
+                    consents.Add(new StatusConsent(
+                        consent.TryGetProperty("id", out var id) ? id.GetString() ?? string.Empty : string.Empty,
+                        consent.TryGetProperty("target_id", out var targetId) ? targetId.GetString() ?? string.Empty : string.Empty,
+                        consent.TryGetProperty("target_title", out var targetTitle) ? targetTitle.GetString() ?? string.Empty : string.Empty,
+                        consent.TryGetProperty("action", out var action) ? action.GetString() ?? string.Empty : string.Empty,
+                        consent.TryGetProperty("agent", out var agent) ? agent.GetString() ?? string.Empty : string.Empty,
+                        expiresAt,
+                        consent.TryGetProperty("remaining_ms", out var remaining) && remaining.TryGetInt64(out var remainingValue)
+                            ? remainingValue
+                            : 0,
+                        consent.TryGetProperty("status", out var status) ? status.GetString() ?? string.Empty : string.Empty));
+                }
+            }
+
             return new StatusSnapshot(
                 root.TryGetProperty("version", out var version) ? version.GetString() ?? string.Empty : string.Empty,
                 root.TryGetProperty("pid", out var pid) && pid.TryGetInt32(out var pidValue) ? pidValue : 0,
@@ -125,7 +161,8 @@ public sealed class StatusClient : IDisposable
                     : 0,
                 targets.Count,
                 json,
-                targets);
+                targets,
+                consents);
         }
         catch
         {
@@ -164,6 +201,35 @@ public sealed class StatusClient : IDisposable
         try
         {
             var path = $"/api/close_target?target_id={Uri.EscapeDataString(id)}";
+            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(_baseUri, path));
+            request.Headers.Add("X-GhostScreen-Token", _endpoint.Token);
+
+            using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                return false;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.TryGetProperty("ok", out var ok) &&
+                   ok.ValueKind == JsonValueKind.True;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public async Task<bool> DecideConsentAsync(
+        string consentId,
+        bool allow,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var path =
+                $"/api/consent?consent_id={Uri.EscapeDataString(consentId)}&decision={(allow ? "allow" : "deny")}";
             using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(_baseUri, path));
             request.Headers.Add("X-GhostScreen-Token", _endpoint.Token);
 

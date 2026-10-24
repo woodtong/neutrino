@@ -5,5 +5,5 @@ public static class ProductInfo
 {
     public const string Name = "GhostScreen";
 
-    public const string Version = "0.4.1-dev";
+    public const string Version = "0.5.0-dev";
 }

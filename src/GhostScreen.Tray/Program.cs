@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using GhostScreen.Core;
+using GhostScreen.TrayApp;
 
 Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 Application.EnableVisualStyles();
@@ -26,10 +27,11 @@ internal sealed class TrayContext : ApplicationContext
     private StatusClient? _client;
     private bool _refreshing;
     private bool _disposed;
+    private ConsentPromptForm? _prompt;
 
     public TrayContext()
     {
-        _statusItem = new ToolStripMenuItem("GhostScreen 未运行") { Enabled = false };
+        _statusItem = new ToolStripMenuItem("中微子 未运行") { Enabled = false };
         _targetsItem = new ToolStripMenuItem("Targets");
         _openItem = new ToolStripMenuItem("打开状态页", null, (_, _) => OpenPage());
         _panicItem = new ToolStripMenuItem("急停（关闭所有 target）", null, (_, _) => Panic());
@@ -46,7 +48,7 @@ internal sealed class TrayContext : ApplicationContext
         _icon = new NotifyIcon
         {
             Icon = SystemIcons.Application,
-            Text = "GhostScreen",
+            Text = "中微子",
             Visible = true,
             ContextMenuStrip = menu,
         };
@@ -66,6 +68,8 @@ internal sealed class TrayContext : ApplicationContext
             _disposed = true;
             _timer.Stop();
             _timer.Dispose();
+            _prompt?.Close();
+            _prompt = null;
             _icon.Visible = false;
             _icon.Dispose();
             _client?.Dispose();
@@ -90,8 +94,9 @@ internal sealed class TrayContext : ApplicationContext
             {
                 _client?.Dispose();
                 _client = null;
-                SetState("GhostScreen 未运行", running: false);
+                SetState("中微子 未运行", running: false);
                 UpdateTargets(null);
+                UpdateConsent(null);
                 return;
             }
 
@@ -104,20 +109,55 @@ internal sealed class TrayContext : ApplicationContext
             var snapshot = await _client.GetStatusAsync();
             if (snapshot is null)
             {
-                SetState("GhostScreen 状态不可达", running: false);
+                SetState("中微子 状态不可达", running: false);
                 UpdateTargets(null);
+                UpdateConsent(null);
                 return;
             }
 
             SetState(
-                $"GhostScreen {snapshot.Version} · {snapshot.TargetCount} 个 target",
+                $"中微子 {snapshot.Version} · {snapshot.TargetCount} 个 target",
                 running: true);
             UpdateTargets(snapshot.Targets);
+            UpdateConsent(snapshot.Consents);
         }
         finally
         {
             _refreshing = false;
         }
+    }
+
+    private void UpdateConsent(IReadOnlyList<StatusConsent>? consents)
+    {
+        if (_prompt is not null)
+        {
+            if (consents is null || !consents.Any(consent => consent.Id == _prompt.ConsentId))
+            {
+                _prompt.Close();
+                _prompt = null;
+            }
+
+            return;
+        }
+
+        if (consents is null || consents.Count == 0 || _client is null)
+        {
+            return;
+        }
+
+        var consent = consents[0];
+        var form = new ConsentPromptForm(
+            consent,
+            async allow => _client is not null && await _client.DecideConsentAsync(consent.Id, allow));
+        form.FormClosed += (_, _) =>
+        {
+            if (ReferenceEquals(_prompt, form))
+            {
+                _prompt = null;
+            }
+        };
+        _prompt = form;
+        form.Show();
     }
 
     private void UpdateTargets(IReadOnlyList<StatusTarget>? targets)
@@ -169,7 +209,7 @@ internal sealed class TrayContext : ApplicationContext
 
         var confirmation = MessageBox.Show(
             $"关闭 target「{title}」并还原窗口？",
-            "GhostScreen",
+            "中微子",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Question);
 
@@ -227,7 +267,7 @@ internal sealed class TrayContext : ApplicationContext
 
         var confirmation = MessageBox.Show(
             "关闭所有 target 并还原窗口？",
-            "GhostScreen 急停",
+            "中微子 急停",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Warning);
 

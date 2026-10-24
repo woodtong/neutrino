@@ -134,12 +134,21 @@ public static class UiaDriver
         return ActivateRaw(raw);
     }
 
+    public static bool HasActionAtPoint(IntPtr hwnd, int screenX, int screenY) =>
+        FindActionAtPoint(hwnd, screenX, screenY) is not null;
+
     /// <summary>
     /// Find the smallest actionable element containing a screen point and perform
     /// its best action. Works for off-screen single-HWND surfaces (WPF/UWP) where
     /// window-message hit testing has no child HWND to target.
     /// </summary>
     public static bool ActivateAtPoint(IntPtr hwnd, int screenX, int screenY)
+    {
+        var best = FindActionAtPoint(hwnd, screenX, screenY);
+        return best is not null && ActivateRaw(best);
+    }
+
+    private static AutomationElement? FindActionAtPoint(IntPtr hwnd, int screenX, int screenY)
     {
         var root = AutomationElement.FromHandle(hwnd);
         var elements = root.FindAll(TreeScope.Descendants, Condition.TrueCondition);
@@ -186,7 +195,7 @@ public static class UiaDriver
             }
         }
 
-        return best is not null && ActivateRaw(best);
+        return best;
     }
 
     private static bool HasAction(AutomationElement element)

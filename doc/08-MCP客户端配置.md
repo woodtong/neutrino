@@ -154,16 +154,16 @@ args = []
 | 目标 | 捕获 | 观测 | 输入 | 备注 |
 |---|---|---|---|---|
 | 经典 Win32 / WinForms | PrintWindow | UIA | 消息 click/scroll/drag/key/set_text；UIA 仅观测 | 主力场景；元素动作不激活窗口 |
-| WPF | PrintWindow | UIA | 无子 HWND；UIA 动作自动执行并恢复前台 | `strict_no_focus_steal=true` 可改为拒绝 |
+| WPF | PrintWindow | UIA | 无子 HWND；默认 strict：人在用时先 `USER_ACTIVE`，3 次后协商 | 消息点击无效，必须 UIA/协商 |
 | Edge GUI（Chromium） | PrintWindow | UIA | CDP（`open_web`/`attach_cdp`）；UIA 回退自动执行并恢复 | 消息输入会被拒绝 |
 | VS Code（Electron） | PrintWindow 只有 chrome | UIA 有限 | CDP；消息输入拒绝 | 用 `--remote-debugging-port` 启动后 `attach_cdp { port }` |
-| Calculator（UWP） | PrintWindow | UIA | UIA（自动执行并恢复；strict 可拒绝） | 启动可能抢焦点 |
+| Calculator（UWP） | PrintWindow | UIA | UIA（默认 strict，需协商） | 启动可能抢焦点 |
 | 网页（`open_web`） | 无头 Edge + CDP | DOM | CDP | 真正零窗口，独立临时 profile |
 | 已有 Chromium/Electron（`attach_cdp`） | CDP | DOM | CDP | 不启动/不关闭外部浏览器；close 只 detach |
 
 - 最小化、隐藏、cloak、DRM 窗口不支持。
 - `attach_window` 会移动窗口，必须 `confirm=true`。
-- `click` 坐标点击：有可点击 HWND 子控件走消息；WPF/UWP 单 HWND 用 UIA `AtPoint` 找元素并恢复前台。`click_element`/`set_text` 默认不移动真实光标：先用 UIA bounds 找到 HWND 子控件，走 `BM_CLICK`/`WM_SETTEXT`，不激活窗口；没有 HWND 时自动走 UIA 并恢复前台。动作返回 `focus: not-needed|restored|stolen`；`stolen` 表示动作完成但前台没恢复（`FOCUS_STOLEN`）。`strict_no_focus_steal=true` 可改为拒绝需要 UIA 的动作。
+- `click` 坐标点击：有可点击 HWND 子控件走消息；WPF/UWP 单 HWND 用 UIA `AtPoint`。`click_element`/`set_text` 先用 UIA bounds 找 HWND 子控件走消息；没有 HWND 时走 UIA。默认 strict：人在用时返回 `USER_ACTIVE`/`AWAITING_USER`，Agent 带 `consent_id` 重试。动作返回 `focus: not-needed|restored|stolen`。
 - 默认不使用 `SendInput`。
 
 ## 8. 故障排查
@@ -171,7 +171,11 @@ args = []
 - **客户端看不到工具**：确认 command 是绝对路径、exe 能独立运行、stdio 没有把日志写到 stdout。
 - **attach 返回 CONFIRM_REQUIRED**：加 `"confirm": true`。
 - **INPUT_UNSUPPORTED**：目标是 Chromium/Electron；改用 `observe` + `click_element` ref，或 CDP。
-- **FOCUS_STEAL_NOT_ALLOWED**：传了 `strict_no_focus_steal=true` 且动作需要 UIA；关闭 strict，或改用坐标/消息动作。
+- **USER_ACTIVE**：人在用电脑，strict 门禁挡住 UIA 动作；按 `retry_after_ms` 重试，3 次后会出现协商。
+- **AWAITING_USER**：协商请求已创建；用返回的 `consent_id` 重试同一动作（允许或 15 秒倒计时后）。
+- **USER_DENIED**：自然人拒绝；本次终止，不要立即重试。
+- **CONSENT_EXPIRED**：consent_id 过期/不匹配；重新发起动作获取新票。
+- **FOCUS_STEAL_NOT_ALLOWED**：传了 `strict_no_focus_steal=true` 且动作需要 UIA；关闭该参数或改用坐标/消息动作。
 - **ELEMENT_NOT_ACTIONABLE**：控件没有可执行 pattern；换控件或改用坐标点击。
 - **FOCUS_STOLEN**：动作已完成但前台没恢复；不要盲目重试，提示用户点回原窗口。
 - **ELEMENT_STALE**：重新 `observe` 获取新 ref。
