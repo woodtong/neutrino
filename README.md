@@ -148,10 +148,9 @@ powershell -ExecutionPolicy Bypass -File scripts/publish.ps1
 | [00-项目概览](doc/00-项目概览.md) | 痛点、目标、场景、成功标准、术语 |
 | [01-技术可行性与方案选型](doc/01-技术可行性与方案选型.md) | 捕获/输入方案对比、关键假设、已知限制、参考来源 |
 | [02-架构设计](doc/02-架构设计.md) | 进程模型、target 生命周期、停泊/捕获/输入/安全设计、ADR |
-| [03-接口设计](doc/03-接口设计.md) | MCP 工具、HTTP/WS、CLI、错误码、坐标约定 |
+| [03-接口设计](doc/03-接口设计.md) | MCP 工具、HTTP/1.1 状态端点、CLI、错误码、坐标约定 |
 | [04-路线图与验收](doc/04-路线图与验收.md) | M0–M8、测试矩阵、DoD、风险 |
 | [05-进度与决策日志](doc/05-进度与决策日志.md) | 跨会话接力记录 |
-| [06-市场与需求调研](doc/06-市场与需求调研.md) | 竞品、需求证据、市场规模、收益模型、定位建议 |
 | [07-开源项目规划](doc/07-开源项目规划.md) | 开源定位、质量红线、范围、工程/测试/发布/社区规划 |
 | [spike/REPORT.md](spike/REPORT.md) | P0 实测报告：WGC/PrintWindow/UIA/CDP、架构修订、证据 |
 | [spike/P1-11-REPORT.md](spike/P1-11-REPORT.md) | 现代应用兼容性：Edge GUI / VS Code / Calculator |
@@ -159,15 +158,10 @@ powershell -ExecutionPolicy Bypass -File scripts/publish.ps1
 | [spike/P1-CLI-REPORT.md](spike/P1-CLI-REPORT.md) | CaptureEngine + CLI（list/state/shot）与 DPI 发现 |
 | [spike/P2-MCP-REPORT.md](spike/P2-MCP-REPORT.md) | TargetManager + MCP stdio（13 工具）与集成测试 |
 | [08-MCP客户端配置](doc/08-MCP客户端配置.md) | Claude Code / Codex / Cursor / ZCode 配置与工作流 |
-| [09-0.1.0 alpha 发布说明](doc/09-0.1.0-alpha发布说明.md) | 上一版发布包、SHA256、限制 |
-| [10-0.2.0 alpha 发布说明](doc/10-0.2.0-alpha发布说明.md) | 历史：网页目标首版 |
-| [11-0.2.1 alpha 发布说明](doc/11-0.2.1-alpha发布说明.md) | 上一版：整页/裁剪、snapshot、network、100 次压力 |
 | [12-Recipes](doc/12-Recipes.md) | 应用/网页启动配方、兼容矩阵、安全边界 |
-| [13-0.2.2 beta 发布说明](doc/13-0.2.2-beta发布说明.md) | 上一版：G3 验收、beta 范围 |
-| [14-0.3.0 beta 发布说明](doc/14-0.3.0-beta发布说明.md) | 上一版：崩溃恢复、状态页、托盘、soak |
-| [15-0.3.1 beta 发布说明](doc/15-0.3.1-beta发布说明.md) | 上一版：attach_cdp、死目标保护、WGC 连续帧 |
-| [17-0.4.0 beta 发布说明](doc/17-0.4.0-beta发布说明.md) | 本版：DPI-unaware 修复、托盘 per-target、VS Code 实测、安装脚本 |
+| [17-0.4.0 beta 发布说明](doc/17-0.4.0-beta发布说明.md) | 最近发布包：DPI-unaware 修复、托盘 per-target、VS Code 实测、安装脚本 |
 | [18-技术栈](doc/18-技术栈.md) | 实际运行时、项目矩阵、Windows/CDP/MCP API 与依赖边界 |
+| [历史归档](doc/archive/README.md) | 市场调研与 0.1–0.3 旧发布说明（不再维护） |
 
 ## 技术栈（0.5.0-dev 实际）
 

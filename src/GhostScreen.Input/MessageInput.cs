@@ -7,7 +7,7 @@ public static class MessageInput
 {
     public static bool ClickButton(IntPtr parent, string title)
     {
-        var children = WindowEnumerator.Children(parent);
+        var children = WindowEnumerator.ChildrenLite(parent);
         var button = children.FirstOrDefault(c => c.ClassName.Contains("BUTTON", StringComparison.OrdinalIgnoreCase) &&
                                                   (string.IsNullOrEmpty(title) || c.Title.Equals(title, StringComparison.OrdinalIgnoreCase)))
                      ?? children.FirstOrDefault(c => c.ClassName.Contains("BUTTON", StringComparison.OrdinalIgnoreCase));
@@ -23,7 +23,7 @@ public static class MessageInput
 
     public static bool SetEditText(IntPtr parent, string classNameHint, string text)
     {
-        var edit = WindowEnumerator.Children(parent)
+        var edit = WindowEnumerator.ChildrenLite(parent)
             .FirstOrDefault(c => c.ClassName.Contains(classNameHint, StringComparison.OrdinalIgnoreCase));
 
         if (edit is null)
@@ -47,13 +47,14 @@ public static class MessageInput
         out string className)
     {
         className = string.Empty;
-        var target = FindTargetWindow(topLevel, screenX, screenY);
-        if (target == topLevel)
+        var child = FindTargetWindow(topLevel, screenX, screenY);
+        if (child is null)
         {
             return false;
         }
 
-        className = WindowEnumerator.Describe(target)?.ClassName ?? string.Empty;
+        className = child.ClassName;
+        var target = child.Handle;
 
         if (!IsClickableClass(className))
         {
@@ -91,13 +92,14 @@ public static class MessageInput
         out string className)
     {
         className = string.Empty;
-        var target = FindTargetWindow(topLevel, screenX, screenY);
-        if (target == topLevel)
+        var child = FindTargetWindow(topLevel, screenX, screenY);
+        if (child is null)
         {
             return false;
         }
 
-        className = WindowEnumerator.Describe(target)?.ClassName ?? string.Empty;
+        className = child.ClassName;
+        var target = child.Handle;
         if (!className.Contains("EDIT", StringComparison.OrdinalIgnoreCase))
         {
             return false;
@@ -138,7 +140,7 @@ public static class MessageInput
 
         var screenX = origin.X + clientX;
         var screenY = origin.Y + clientY;
-        var target = FindTargetWindow(topLevel, screenX, screenY);
+        var target = FindTargetWindow(topLevel, screenX, screenY)?.Handle ?? topLevel;
 
         var point = new NativeMethods.POINT { X = screenX, Y = screenY };
         if (!NativeMethods.ScreenToClient(target, ref point))
@@ -170,7 +172,7 @@ public static class MessageInput
 
         var screenX = origin.X + clientX;
         var screenY = origin.Y + clientY;
-        var target = FindTargetWindow(topLevel, screenX, screenY);
+        var target = FindTargetWindow(topLevel, screenX, screenY)?.Handle ?? topLevel;
         var lParam = (IntPtr)((screenY << 16) | (screenX & 0xFFFF));
         var wParam = (IntPtr)((delta & 0xFFFF) << 16);
         NativeMethods.SendMessage(target, NativeMethods.WM_MOUSEWHEEL, wParam, lParam);
@@ -201,7 +203,7 @@ public static class MessageInput
         var startScreenY = origin.Y + startClientY;
         var endScreenX = origin.X + endClientX;
         var endScreenY = origin.Y + endClientY;
-        var target = FindTargetWindow(topLevel, startScreenX, startScreenY);
+        var target = FindTargetWindow(topLevel, startScreenX, startScreenY)?.Handle ?? topLevel;
 
         var start = new NativeMethods.POINT { X = startScreenX, Y = startScreenY };
         var end = new NativeMethods.POINT { X = endScreenX, Y = endScreenY };
@@ -231,14 +233,12 @@ public static class MessageInput
         return true;
     }
 
-    private static IntPtr FindTargetWindow(IntPtr topLevel, int screenX, int screenY)
+    private static ChildWindowInfo? FindTargetWindow(IntPtr topLevel, int screenX, int screenY)
     {
-        var child = WindowEnumerator.Children(topLevel)
+        return WindowEnumerator.ChildrenLite(topLevel)
             .Where(window => window.Bounds.Contains(screenX, screenY))
             .OrderBy(window => (long)window.Bounds.Width * window.Bounds.Height)
             .FirstOrDefault();
-
-        return child?.Handle ?? topLevel;
     }
 
     private static bool IsClickableClass(string className) =>

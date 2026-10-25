@@ -27,6 +27,16 @@ of silently stealing the human's foreground. Not packaged yet.
   retry/consent protocol.
 - Status endpoint exposes pending consents and `POST /api/consent` with the
   loopback token; `StatusClient` parses consents and decides them.
+- Performance: added lightweight child-window enumeration for message input,
+  cached process names (30s TTL), removed a duplicate UIA tree walk for point
+  clicks, and skipped a duplicate element resolve for `click_element(name)`.
+  Local microbench: `list_windows` 29.15 → 1.04 ms/op, child-hit click
+  0.32 → 0.18 ms/op.
+- Docs: added `doc/18-技术栈.md`; archived market research and 0.1–0.3 release
+  notes under `doc/archive/`; README now documents the implemented stack instead
+  of the old proposed stack.
+- Cleanup: removed unpacked release directories (zips/SHA256 kept) and generated
+  `spike/out` screenshots.
 - Tests: 32/32 default (ConsentManager unit tests); 32/32 with
   `GHOSTSCREEN_UIA_TESTS=1` (WPF balanced execution + strict consent gate).
 - Version: 0.5.0-dev. The 0.4.0-beta artifact remains the published package.

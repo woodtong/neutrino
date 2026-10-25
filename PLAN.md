@@ -11,7 +11,7 @@
 > - 架构：[`doc/02-架构设计.md`](doc/02-架构设计.md)
 > - 接口：[`doc/03-接口设计.md`](doc/03-接口设计.md)
 > - 技术验收：[`doc/04-路线图与验收.md`](doc/04-路线图与验收.md)
-> - 市场背景：[`doc/06-市场与需求调研.md`](doc/06-市场与需求调研.md)（仅背景，不作为目标）
+> - 市场背景：[`doc/archive/06-市场与需求调研.md`](doc/archive/06-市场与需求调研.md)（仅背景，不作为目标）
 
 ## 0. 当前状态
 
@@ -277,7 +277,7 @@
   - 已完成：本地静态站点全链路（截图/整页/裁剪/observe/点击/输入/按键/滚动/拖拽/console/network/snapshot/视口/导航/关闭）；`tests/GhostScreen.WebStress` 100 次开关 0 失败，句柄/内存封顶，profile 0。
   - 待补：慢请求用例（network idle 已实现，但未用慢服务验证）。
 - [x] **P3-10 v0.2.0-beta 发布**（0.5d）：release notes + 已知限制。
-  - 已发布 **0.2.2-beta**（G3 完成）；发布说明 `doc/13-0.2.2-beta发布说明.md`，配方 `doc/12-Recipes.md`。
+  - 已发布 **0.2.2-beta**（G3 完成）；发布说明 `doc/archive/13-0.2.2-beta发布说明.md`，配方 `doc/12-Recipes.md`。
 
 **Gate G3**
 - [x] 三视口截图正确；横向溢出能检出。— `snapshot` 390/768/1440 + 400/900 实测，`#wide` 定位。

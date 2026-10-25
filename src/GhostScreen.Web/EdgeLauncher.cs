@@ -147,7 +147,7 @@ public sealed class EdgeBrowser : IAsyncDisposable
             $"--user-data-dir=\"{profileDirectory}\" " +
             "--hide-scrollbars --no-first-run --no-default-browser-check --mute-audio " +
             "--disable-backgrounding-occluded-windows --disable-renderer-backgrounding " +
-            "--disable-background-timer-throttling about:blank";
+            "--disable-background-timer-throttling --edge-skip-compat-layer-relaunch about:blank";
 
         Process process;
         try
