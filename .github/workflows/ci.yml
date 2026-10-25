@@ -39,6 +39,10 @@ jobs:
           if-no-files-found: ignore
 
   codeql:
+    # Code scanning is not available on private repositories without GitHub
+    # Advanced Security; the job fails while private with "Resource not
+    # accessible by integration". Run it once the repository is public.
+    if: ${{ !github.event.repository.private }}
     runs-on: windows-2022
     permissions:
       contents: read
