@@ -167,16 +167,21 @@ powershell -ExecutionPolicy Bypass -File scripts/publish.ps1
 | [14-0.3.0 beta 发布说明](doc/14-0.3.0-beta发布说明.md) | 上一版：崩溃恢复、状态页、托盘、soak |
 | [15-0.3.1 beta 发布说明](doc/15-0.3.1-beta发布说明.md) | 上一版：attach_cdp、死目标保护、WGC 连续帧 |
 | [17-0.4.0 beta 发布说明](doc/17-0.4.0-beta发布说明.md) | 本版：DPI-unaware 修复、托盘 per-target、VS Code 实测、安装脚本 |
+| [18-技术栈](doc/18-技术栈.md) | 实际运行时、项目矩阵、Windows/CDP/MCP API 与依赖边界 |
 
-## 技术栈（拟）
+## 技术栈（0.5.0-dev 实际）
 
-- .NET 8（Win32/WinRT/UIA/COM 互操作）
-- PrintWindow `PW_RENDERFULLCONTENT`（离屏主捕获）
-- Windows.Graphics.Capture + Direct3D11（可见/VDD 连续帧）
-- 无头 Edge + Chrome DevTools Protocol（网页）
-- ASP.NET Core 最小 API + WebSocket（本地服务）
-- MCP（stdio）+ 极简本地状态页
-- 可选：IddCx 虚拟显示器（检测用户自装驱动）
+- **C# / .NET 8**：Core 为 `net8.0`，Windows 项目为 `net8.0-windows10.0.19041.0`；nullable、analyzers、warnings-as-errors、deterministic
+- **零第三方 NuGet 运行时依赖**：只使用 BCL、Windows SDK/WinRT 投影和 Edge 自带协议
+- **捕获**：PrintWindow `PW_RENDERFULLCONTENT` + GDI（离屏主路径）；Windows.Graphics.Capture + Direct3D11（仅可见/VDD）；WinRT `BitmapEncoder` 编码 PNG
+- **观测/输入**：`System.Windows.Automation`（UIA）；Win32 窗口消息（`BM_CLICK`/`WM_*`/`WM_SETTEXT`）；默认不用 SendInput；FocusGuard + Human Consent Gate
+- **网页**：无头 Edge + CDP（`ClientWebSocket` + JSON-RPC）；私有临时 profile；`CreateProcessW` 启动，无 shell
+- **Agent 接口**：手写 MCP stdio（JSON-RPC 2.0，21 工具）；无 MCP SDK 运行时依赖
+- **本地控制面**：原始 `TcpListener` + 手写 HTTP/1.1（127.0.0.1 + token），**不是 ASP.NET Core/Http.sys**；WinForms 托盘 + 非激活协商窗
+- **测试/CI**：自写零依赖测试 runner（32 项）；GitHub Actions `windows-2022`；CodeQL 仅在 public 仓库运行
+- **打包**：`dotnet publish` self-contained single-file `win-x64`；zip + SHA256；unsigned
+
+完整版本、项目矩阵、API/依赖边界见 [18-技术栈](doc/18-技术栈.md)。
 
 ## 平台
 
