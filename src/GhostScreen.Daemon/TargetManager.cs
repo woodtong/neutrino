@@ -156,7 +156,7 @@ public sealed class TargetSession : ITarget
             EnsureOpen();
             var element = UiaDriver.FindByName(Info.Handle, name)
                 ?? throw new TargetException("ELEMENT_NOT_FOUND", $"UIA element not found: {name}");
-            var result = ClickElementCore(element, strictNoFocusSteal, consentId);
+            var result = ClickElementCore(element, strictNoFocusSteal, consentId, alreadyFresh: true);
             Touch();
             return result;
         }
@@ -189,11 +189,13 @@ public sealed class TargetSession : ITarget
     private NativeActionResult ClickElementCore(
         UiaElement element,
         bool strictNoFocusSteal,
-        string? consentId)
+        string? consentId,
+        bool alreadyFresh = false)
     {
         // Re-resolve the element so a layout change between observe and click
-        // cannot send a message to a stale rectangle.
-        var fresh = ResolveFresh(element);
+        // cannot send a message to a stale rectangle. ClickElement(name) already
+        // resolved it just now, so it can skip the second tree lookup.
+        var fresh = alreadyFresh ? element : ResolveFresh(element);
 
         if (fresh.Bounds.Width > 0 &&
             fresh.Bounds.Height > 0 &&
@@ -273,7 +275,8 @@ public sealed class TargetSession : ITarget
             // have no child HWND to hit; resolve the element at the point via UIA.
             if (IsSingleSurface(Info.ClassName))
             {
-                if (!UiaDriver.HasActionAtPoint(Info.Handle, screenX, screenY))
+                var element = UiaDriver.FindActionAtPoint(Info.Handle, screenX, screenY);
+                if (element is null)
                 {
                     throw new TargetException(
                         "ELEMENT_NOT_ACTIONABLE",
@@ -283,7 +286,7 @@ public sealed class TargetSession : ITarget
                 EnterUia("click", $"point:{clientX},{clientY}", strictNoFocusSteal, consentId);
 
                 using var guard = FocusGuard.Begin(Info.Handle);
-                if (!UiaDriver.ActivateAtPoint(Info.Handle, screenX, screenY))
+                if (!UiaDriver.ActivateElement(element))
                 {
                     throw new TargetException(
                         "ELEMENT_NOT_ACTIONABLE",

@@ -6,10 +6,10 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    $productInfo = Get-Content (Join-Path $root "src/GhostScreen.Core/ProductInfo.cs") -Raw
-    $match = [regex]::Match($productInfo, 'Version\s*=\s*"([^"]+)"')
+    $props = Get-Content (Join-Path $root "Directory.Build.props") -Raw
+    $match = [regex]::Match($props, '<Version>([^<]+)</Version>')
     if (-not $match.Success) {
-        throw "Cannot read ProductInfo.Version."
+        throw "Cannot read <Version> from Directory.Build.props."
     }
     $Version = $match.Groups[1].Value
 }
@@ -28,18 +28,21 @@ Write-Host "Publishing MCP..."
 dotnet publish (Join-Path $root "src/GhostScreen.Mcp/GhostScreen.Mcp.csproj") `
     -c Release -r win-x64 --self-contained true `
     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+    -p:Version=$Version `
     -o (Join-Path $out "mcp")
 
 Write-Host "Publishing CLI..."
 dotnet publish (Join-Path $root "src/GhostScreen.Cli/GhostScreen.Cli.csproj") `
     -c Release -r win-x64 --self-contained true `
     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+    -p:Version=$Version `
     -o (Join-Path $out "cli")
 
 Write-Host "Publishing tray..."
 dotnet publish (Join-Path $root "src/GhostScreen.Tray/GhostScreen.Tray.csproj") `
     -c Release -r win-x64 --self-contained true `
     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+    -p:Version=$Version `
     -o (Join-Path $out "tray")
 
 Copy-Item (Join-Path $root "README.md") (Join-Path $out "README.md")

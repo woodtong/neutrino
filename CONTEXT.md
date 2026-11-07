@@ -72,6 +72,8 @@ spike/                      P0/P1-11/P1-CLI/P1-12/P2-MCP 报告与证据
 - 干净目录自包含冒烟：把 0.3.0-beta 复制到 `%TEMP%`，PATH 只留 `C:\Windows\System32`（无 dotnet），CLI/MCP 仍启动、20 工具、open_web/close_all 通过；真实无 .NET 新机器仍未验证
 - P1-12 安静重测：`humanInput=false`，前台/光标/剪贴板不变，3 帧哈希不同，`pass=true`
 - `dotnet format --verify-no-changes`：通过
+- 性能（本机微基准，Release）：`WindowEnumerator.List` 29.15 → 1.04 ms/op（进程名缓存），`Children` 0.31 → 0.17 ms/op，`ClickClientPoint` 2.10 → 1.60 ms/op（`ChildrenLite` + 单次 UIA 树查找）
+- 清理：删除解包后的 `artifacts/GhostScreen-*` 目录（保留 zip/SHA256，3.3G → 929M）与 `spike/out`；旧发布说明/市场调研归档到 `doc/archive/`
 - 0.4.0-beta 包：`artifacts/GhostScreen-0.4.0-beta-win-x64.zip`（172 MB，SHA256 `1A87DC63...FCBC225`）；发布版冒烟（21 工具 + open_web + close_all + 状态页 + tray）
 - 关闭 web target 后 Edge 进程退出、`%LOCALAPPDATA%\GhostScreen\web-profiles` 为空
 - 状态端点：MCP 启动后 stderr 打印 URL；`%LOCALAPPDATA%\GhostScreen\status.json` 含 url/token/port/pid，退出删除；状态页含 target 卡片与 5s 刷新缩略图（`/api/screenshot`）

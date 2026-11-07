@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -5,9 +6,18 @@ using GhostScreen.Core;
 
 namespace GhostScreen.Windows;
 
+/// <summary>Lightweight child-window facts used by message input hit testing.</summary>
+public sealed record ChildWindowInfo(
+    IntPtr Handle,
+    string ClassName,
+    string Title,
+    Rect Bounds,
+    bool Visible);
+
 /// <summary>Enumerates and describes top-level windows for the current interactive session.</summary>
 public static class WindowEnumerator
 {
+    private static readonly ConcurrentDictionary<uint, (string Name, long ExpiresAt)> ProcessNameCache = new();
     public static IReadOnlyList<WindowInfo> List(bool includeInvisible = false, bool includeOwnProcess = false)
     {
         var list = new List<WindowInfo>();
@@ -180,6 +190,46 @@ public static class WindowEnumerator
         return list;
     }
 
+    /// <summary>
+    /// Child windows with only the fields needed for message hit testing. Unlike
+    /// <see cref="Children"/> this avoids process lookups, DPI, DWM and display
+    /// affinity queries per child.
+    /// </summary>
+    public static IReadOnlyList<ChildWindowInfo> ChildrenLite(IntPtr parent)
+    {
+        var list = new List<ChildWindowInfo>();
+        NativeMethods.EnumChildWindows(parent, (hwnd, _) =>
+        {
+            if (!NativeMethods.GetWindowRect(hwnd, out var rect))
+            {
+                return true;
+            }
+
+            var width = rect.Right - rect.Left;
+            var height = rect.Bottom - rect.Top;
+            if (width <= 0 || height <= 0)
+            {
+                return true;
+            }
+
+            var className = new StringBuilder(256);
+            NativeMethods.GetClassName(hwnd, className, className.Capacity);
+
+            var titleLength = NativeMethods.GetWindowTextLength(hwnd);
+            var title = new StringBuilder(Math.Max(titleLength + 1, 2));
+            NativeMethods.GetWindowText(hwnd, title, title.Capacity);
+
+            list.Add(new ChildWindowInfo(
+                hwnd,
+                className.ToString(),
+                title.ToString(),
+                new Rect(rect.Left, rect.Top, width, height),
+                NativeMethods.IsWindowVisible(hwnd)));
+            return true;
+        }, IntPtr.Zero);
+        return list;
+    }
+
     public static IntPtr FindChild(IntPtr parent, string className, string? title = null)
     {
         return NativeMethods.FindWindowEx(parent, IntPtr.Zero, className, title);
@@ -203,13 +253,23 @@ public static class WindowEnumerator
 
     private static string GetProcessName(uint pid)
     {
+        var now = Environment.TickCount64;
+        if (ProcessNameCache.TryGetValue(pid, out var cached) && cached.ExpiresAt > now)
+        {
+            return cached.Name;
+        }
+
+        string name;
         try
         {
-            return Process.GetProcessById((int)pid).ProcessName;
+            name = Process.GetProcessById((int)pid).ProcessName;
         }
         catch
         {
-            return string.Empty;
+            name = string.Empty;
         }
+
+        ProcessNameCache[pid] = (name, now + 30_000);
+        return name;
     }
 }
