@@ -6,7 +6,7 @@
 
 应用窗口在系统里照常真实渲染，但不出现在人的显示器上。Agent 可以随时截图、点击、输入；人继续自己的工作，不闪窗、不被抢焦点、不被抢鼠标。
 
-> 状态：**0.5.0-dev**（基于已发布的 0.4.0-beta；焦点安全 + Human Consent Gate，未打包）。含崩溃恢复、挂起拒绝、DPI-unaware 修复、状态页/托盘（per-target 关闭 + 协商窗）、`attach_cdp`（VS Code/Electron）、soak harness 与 unsigned 安装脚本；MCP **21 工具**，测试 **32/32**。产品仍早期。
+> 状态：开发线 **0.5.0-dev**，对外首个 GitHub Release **[v0.1.0](https://github.com/woodtong/neutrino/releases/tag/v0.1.0)**（发布线从 0.1.0 起独立编号，与开发线分开）。含崩溃恢复、挂起拒绝、DPI-unaware 修复、状态页/托盘（per-target 关闭 + 协商窗）、`attach_cdp`（VS Code/Electron）、Human Consent Gate、`gs doctor`、soak harness 与 unsigned 安装脚本；MCP **21 工具**，测试 **34/34**。产品仍早期。
 > 关键实测：WGC 对完全离屏窗口会冻结；PrintWindow 离屏实时（p50≈12ms）。架构已改为 **PrintWindow 主捕获 + WGC 可见/VDD + CDP 网页**。
 > 定位：**开源项目（Apache-2.0）**，不做商业产品；工程质量、兼容性、可维护性优先。执行计划见 [07-开源项目规划](doc/07-开源项目规划.md)。
 > 工作名可改，不影响设计。
@@ -53,6 +53,8 @@ dotnet build src/GhostScreen.Cli -c Release
 ```
 
 `shot` 会先停泊、截图、再还原；移动别人的窗口必须显式 `--confirm`。报告：[P1-CLI](spike/P1-CLI-REPORT.md)。
+
+环境自检（P2）：`gs doctor [--json] [--bundle path]` 检查 OS/Edge/WGC/显示器/状态目录/状态端点，异常项带下一步提示；`--bundle` 输出脱敏报告（用户名 → `%USER%`，token → `%REDACTED%`），可直接贴 issue。排障指南：[doc/19-Troubleshooting](doc/19-Troubleshooting.md)。
 
 ## MCP（P2/P3 切片）
 
@@ -101,19 +103,19 @@ dotnet format GhostScreen.sln --verify-no-changes
 - 该开关也会运行严格协商门集成测试（WPF 夹具 + 固定“用户活跃”探针；会短暂改变前台焦点）。
 - 测试结束会断言：测试进程没有留下任何与虚拟屏相交的窗口。
 
-## 发布包（最新：0.4.0-beta；源码 0.4.1-dev 未打包）
+## 发布包（最新：GitHub Release v0.1.0）
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/publish.ps1
+powershell -ExecutionPolicy Bypass -File scripts/publish.ps1 -Version 0.1.0
 ```
 
-生成 `artifacts/GhostScreen-0.4.0-beta-win-x64.zip`（约 172 MB，self-contained MCP/CLI/Tray）。版本号来自 `src/GhostScreen.Core/ProductInfo.cs`；SHA256 见同名 `.sha256` 文件。
-当前源码版本已是 `0.4.1-dev`（焦点安全修复）；重新打包会生成 `GhostScreen-0.4.1-dev-win-x64.zip`，不会覆盖 0.4.0-beta 的发布包。
+生成 `artifacts/GhostScreen-0.1.0-win-x64.zip`（约 172 MB，self-contained MCP/CLI/Tray），SHA256 见同名 `.sha256` 文件；zip 与校验和作为 GitHub Release 附件发布。
+版本号：不传 `-Version` 时用 `Directory.Build.props` 的开发线版本（当前 `0.5.0-dev`）；发布时传 `-Version`，经 `dotnet publish -p:Version` 写入，包内 `gs version` 显示发布版本。
 
 安装（可选，unsigned）：`powershell -ExecutionPolicy Bypass -File scripts/install.ps1`
 卸载：`powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Uninstall`
 
-说明：[0.4.0 beta 发布说明](doc/17-0.4.0-beta发布说明.md)；启动配方见 [doc/12-Recipes](doc/12-Recipes.md)。
+说明：[0.1.0 发布说明](doc/17-0.1.0发布说明.md)；启动配方见 [doc/12-Recipes](doc/12-Recipes.md)。
 
 完整数据与截图：[spike/REPORT.md](spike/REPORT.md) 与 `spike/evidence/`。
 
@@ -148,10 +150,9 @@ powershell -ExecutionPolicy Bypass -File scripts/publish.ps1
 | [00-项目概览](doc/00-项目概览.md) | 痛点、目标、场景、成功标准、术语 |
 | [01-技术可行性与方案选型](doc/01-技术可行性与方案选型.md) | 捕获/输入方案对比、关键假设、已知限制、参考来源 |
 | [02-架构设计](doc/02-架构设计.md) | 进程模型、target 生命周期、停泊/捕获/输入/安全设计、ADR |
-| [03-接口设计](doc/03-接口设计.md) | MCP 工具、HTTP/WS、CLI、错误码、坐标约定 |
+| [03-接口设计](doc/03-接口设计.md) | MCP 工具、HTTP/1.1 状态端点、CLI、错误码、坐标约定 |
 | [04-路线图与验收](doc/04-路线图与验收.md) | M0–M8、测试矩阵、DoD、风险 |
 | [05-进度与决策日志](doc/05-进度与决策日志.md) | 跨会话接力记录 |
-| [06-市场与需求调研](doc/06-市场与需求调研.md) | 竞品、需求证据、市场规模、收益模型、定位建议 |
 | [07-开源项目规划](doc/07-开源项目规划.md) | 开源定位、质量红线、范围、工程/测试/发布/社区规划 |
 | [spike/REPORT.md](spike/REPORT.md) | P0 实测报告：WGC/PrintWindow/UIA/CDP、架构修订、证据 |
 | [spike/P1-11-REPORT.md](spike/P1-11-REPORT.md) | 现代应用兼容性：Edge GUI / VS Code / Calculator |
@@ -159,24 +160,24 @@ powershell -ExecutionPolicy Bypass -File scripts/publish.ps1
 | [spike/P1-CLI-REPORT.md](spike/P1-CLI-REPORT.md) | CaptureEngine + CLI（list/state/shot）与 DPI 发现 |
 | [spike/P2-MCP-REPORT.md](spike/P2-MCP-REPORT.md) | TargetManager + MCP stdio（13 工具）与集成测试 |
 | [08-MCP客户端配置](doc/08-MCP客户端配置.md) | Claude Code / Codex / Cursor / ZCode 配置与工作流 |
-| [09-0.1.0 alpha 发布说明](doc/09-0.1.0-alpha发布说明.md) | 上一版发布包、SHA256、限制 |
-| [10-0.2.0 alpha 发布说明](doc/10-0.2.0-alpha发布说明.md) | 历史：网页目标首版 |
-| [11-0.2.1 alpha 发布说明](doc/11-0.2.1-alpha发布说明.md) | 上一版：整页/裁剪、snapshot、network、100 次压力 |
 | [12-Recipes](doc/12-Recipes.md) | 应用/网页启动配方、兼容矩阵、安全边界 |
-| [13-0.2.2 beta 发布说明](doc/13-0.2.2-beta发布说明.md) | 上一版：G3 验收、beta 范围 |
-| [14-0.3.0 beta 发布说明](doc/14-0.3.0-beta发布说明.md) | 上一版：崩溃恢复、状态页、托盘、soak |
-| [15-0.3.1 beta 发布说明](doc/15-0.3.1-beta发布说明.md) | 上一版：attach_cdp、死目标保护、WGC 连续帧 |
-| [17-0.4.0 beta 发布说明](doc/17-0.4.0-beta发布说明.md) | 本版：DPI-unaware 修复、托盘 per-target、VS Code 实测、安装脚本 |
+| [17-0.1.0 发布说明](doc/17-0.1.0发布说明.md) | 首个 GitHub Release：Human Consent Gate、gs doctor、焦点安全、性能；发布线独立编号 |
+| [18-技术栈](doc/18-技术栈.md) | 实际运行时、项目矩阵、Windows/CDP/MCP API 与依赖边界 |
+| [历史归档](doc/archive/README.md) | 市场调研与 0.1–0.3 旧发布说明（不再维护） |
 
-## 技术栈（拟）
+## 技术栈（0.5.0-dev / 0.1.0 实际）
 
-- .NET 8（Win32/WinRT/UIA/COM 互操作）
-- PrintWindow `PW_RENDERFULLCONTENT`（离屏主捕获）
-- Windows.Graphics.Capture + Direct3D11（可见/VDD 连续帧）
-- 无头 Edge + Chrome DevTools Protocol（网页）
-- ASP.NET Core 最小 API + WebSocket（本地服务）
-- MCP（stdio）+ 极简本地状态页
-- 可选：IddCx 虚拟显示器（检测用户自装驱动）
+- **C# / .NET 8**：Core 为 `net8.0`，Windows 项目为 `net8.0-windows10.0.19041.0`；nullable、analyzers、warnings-as-errors、deterministic
+- **零第三方 NuGet 运行时依赖**：只使用 BCL、Windows SDK/WinRT 投影和 Edge 自带协议
+- **捕获**：PrintWindow `PW_RENDERFULLCONTENT` + GDI（离屏主路径）；Windows.Graphics.Capture + Direct3D11（仅可见/VDD）；WinRT `BitmapEncoder` 编码 PNG
+- **观测/输入**：`System.Windows.Automation`（UIA）；Win32 窗口消息（`BM_CLICK`/`WM_*`/`WM_SETTEXT`）；默认不用 SendInput；FocusGuard + Human Consent Gate
+- **网页**：无头 Edge + CDP（`ClientWebSocket` + JSON-RPC）；私有临时 profile；`CreateProcessW` 启动，无 shell
+- **Agent 接口**：手写 MCP stdio（JSON-RPC 2.0，21 工具）；无 MCP SDK 运行时依赖
+- **本地控制面**：原始 `TcpListener` + 手写 HTTP/1.1（127.0.0.1 + token），**不是 ASP.NET Core/Http.sys**；WinForms 托盘 + 非激活协商窗
+- **测试/CI**：自写零依赖测试 runner（32 项）；GitHub Actions `windows-2022`；CodeQL 仅在 public 仓库运行
+- **打包**：`dotnet publish` self-contained single-file `win-x64`；zip + SHA256；unsigned
+
+完整版本、项目矩阵、API/依赖边界见 [18-技术栈](doc/18-技术栈.md)。
 
 ## 平台
 

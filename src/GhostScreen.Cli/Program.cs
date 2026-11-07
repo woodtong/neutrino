@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using GhostScreen.Capture;
 using GhostScreen.Core;
+using GhostScreen.Daemon;
 using GhostScreen.Windows;
 
 DpiAwareness.EnablePerMonitorV2();
@@ -28,6 +29,7 @@ internal static class Cli
             "state" => State(),
             "list" => List(args),
             "shot" => Shot(args),
+            "doctor" => Doctor(args),
             "help" or "-h" or "--help" => Help(),
             _ => Unknown(args[0]),
         };
@@ -197,6 +199,67 @@ internal static class Cli
         }
     }
 
+    private static int Doctor(string[] args)
+    {
+        List<DoctorItem> items;
+        try
+        {
+            items = DoctorChecks.Run();
+        }
+        catch (Exception ex)
+        {
+            return Fail("DOCTOR_FAILED", ex.Message);
+        }
+
+        if (Has(args, "--json"))
+        {
+            var payload = items.Select(item => new
+            {
+                id = item.Id,
+                status = item.Status.ToString().ToLowerInvariant(),
+                detail = item.Detail,
+                hint = item.Hint,
+            });
+            Console.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));
+        }
+        else
+        {
+            Console.WriteLine($"{ProductInfo.Name} {ProductInfo.Version} doctor");
+            Console.WriteLine(new string('-', 60));
+            foreach (var item in items)
+            {
+                var mark = item.Status switch
+                {
+                    DoctorStatus.Ok => "OK  ",
+                    DoctorStatus.Warn => "WARN",
+                    DoctorStatus.Fail => "FAIL",
+                    _ => "INFO",
+                };
+                Console.WriteLine($"[{mark}] {item.Id}: {item.Detail}");
+                if (item.Hint is not null)
+                {
+                    Console.WriteLine($"       hint: {item.Hint}");
+                }
+            }
+
+            Console.WriteLine(new string('-', 60));
+            Console.WriteLine(items.Any(item => item.Status == DoctorStatus.Fail)
+                ? "Some checks failed — see hints above and doc/19-Troubleshooting.md."
+                : "Hints above; full guide in doc/19-Troubleshooting.md.");
+        }
+
+        var bundlePath = Get(args, "--bundle");
+        if (bundlePath is not null)
+        {
+            var fullPath = Path.GetFullPath(bundlePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+            File.WriteAllText(fullPath, DoctorChecks.BuildBundle(items) + Environment.NewLine);
+            Console.Error.WriteLine($"bundle written (redacted): {fullPath}");
+        }
+
+        return items.Any(item => item.Status == DoctorStatus.Fail) ? 1 : 0;
+    }
+
     private static int Help()
     {
         PrintHelp();
@@ -225,8 +288,10 @@ internal static class Cli
               gs state
               gs list [--all] [--json]
               gs shot --hwnd 0x... [--out path] [--confirm] [--no-stable] [--timeout-ms N]
+              gs doctor [--json] [--bundle path]
 
             shot requires --confirm because it moves the window off-screen and restores it.
+            doctor checks OS/Edge/WGC/display/state/status endpoint; --bundle writes a redacted report.
             """);
     }
 

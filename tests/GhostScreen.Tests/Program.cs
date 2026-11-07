@@ -944,6 +944,44 @@ var tests = new (string Name, Action Body)[]
             }
         }
     }),
+    ("DoctorChecks runs every check without throwing", () =>
+    {
+        var items = DoctorChecks.Run();
+        Assert(items.Count >= 6, $"expected at least 6 checks, got {items.Count}");
+        var ids = items.Select(item => item.Id).ToArray();
+        Assert(ids.Length == ids.Distinct().Count(), "check ids must be unique");
+        Assert(ids.Contains("os") && ids.Contains("edge") && ids.Contains("wgc") &&
+               ids.Contains("display") && ids.Contains("state_dir") && ids.Contains("status"),
+            $"missing expected ids: {string.Join(",", ids)}");
+        var os = items.Single(item => item.Id == "os");
+        Assert(os.Status == DoctorStatus.Ok, $"os check should pass on this machine: {os.Detail}");
+        foreach (var item in items)
+        {
+            Assert(!string.IsNullOrWhiteSpace(item.Detail), $"{item.Id} must have a detail");
+        }
+    }),
+    ("DoctorChecks redacts usernames and status tokens", () =>
+    {
+        var url = "http://127.0.0.1:54321/?token=SECRETTOKEN";
+        var sanitized = DoctorChecks.SanitizeUrl(url);
+        Assert(!sanitized.Contains("SECRETTOKEN", StringComparison.Ordinal), "token must be stripped from urls");
+        Assert(sanitized.Contains("%REDACTED%", StringComparison.Ordinal), "token placeholder expected");
+
+        var userName = Environment.UserName;
+        if (!string.IsNullOrEmpty(userName))
+        {
+            var path = $@"C:\Users\{userName}\AppData\Local\GhostScreen\state\targets.json";
+            var redacted = DoctorChecks.Redact(path);
+            Assert(!redacted.Contains(userName, StringComparison.Ordinal), "username must be redacted");
+        }
+
+        var bundle = DoctorChecks.BuildBundle(
+        [
+            new DoctorItem("state_dir", DoctorStatus.Ok, $@"C:\Users\{userName}\state", "see http://127.0.0.1:1/?token=abc"),
+        ]);
+        Assert(!bundle.Contains("token=abc", StringComparison.Ordinal), "bundle must not contain raw tokens");
+        Assert(!bundle.Contains(userName, StringComparison.Ordinal), "bundle must not contain the username");
+    }),
     ("ConsentManager retries, auto-allows, and consumes once", () =>
     {
         var now = DateTimeOffset.UtcNow;
