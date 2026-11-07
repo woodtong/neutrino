@@ -6,7 +6,7 @@
 
 应用窗口在系统里照常真实渲染，但不出现在人的显示器上。Agent 可以随时截图、点击、输入；人继续自己的工作，不闪窗、不被抢焦点、不被抢鼠标。
 
-> 状态：**0.5.0-dev**（基于已发布的 0.4.0-beta；焦点安全 + Human Consent Gate，未打包）。含崩溃恢复、挂起拒绝、DPI-unaware 修复、状态页/托盘（per-target 关闭 + 协商窗）、`attach_cdp`（VS Code/Electron）、soak harness 与 unsigned 安装脚本；MCP **21 工具**，测试 **32/32**。产品仍早期。
+> 状态：开发线 **0.5.0-dev**，对外首个 GitHub Release **[v0.1.0](https://github.com/woodtong/neutrino/releases/tag/v0.1.0)**（发布线从 0.1.0 起独立编号，与开发线分开）。含崩溃恢复、挂起拒绝、DPI-unaware 修复、状态页/托盘（per-target 关闭 + 协商窗）、`attach_cdp`（VS Code/Electron）、Human Consent Gate、`gs doctor`、soak harness 与 unsigned 安装脚本；MCP **21 工具**，测试 **34/34**。产品仍早期。
 > 关键实测：WGC 对完全离屏窗口会冻结；PrintWindow 离屏实时（p50≈12ms）。架构已改为 **PrintWindow 主捕获 + WGC 可见/VDD + CDP 网页**。
 > 定位：**开源项目（Apache-2.0）**，不做商业产品；工程质量、兼容性、可维护性优先。执行计划见 [07-开源项目规划](doc/07-开源项目规划.md)。
 > 工作名可改，不影响设计。
@@ -53,6 +53,8 @@ dotnet build src/GhostScreen.Cli -c Release
 ```
 
 `shot` 会先停泊、截图、再还原；移动别人的窗口必须显式 `--confirm`。报告：[P1-CLI](spike/P1-CLI-REPORT.md)。
+
+环境自检（P2）：`gs doctor [--json] [--bundle path]` 检查 OS/Edge/WGC/显示器/状态目录/状态端点，异常项带下一步提示；`--bundle` 输出脱敏报告（用户名 → `%USER%`，token → `%REDACTED%`），可直接贴 issue。排障指南：[doc/19-Troubleshooting](doc/19-Troubleshooting.md)。
 
 ## MCP（P2/P3 切片）
 
@@ -101,19 +103,19 @@ dotnet format GhostScreen.sln --verify-no-changes
 - 该开关也会运行严格协商门集成测试（WPF 夹具 + 固定“用户活跃”探针；会短暂改变前台焦点）。
 - 测试结束会断言：测试进程没有留下任何与虚拟屏相交的窗口。
 
-## 发布包（最新：0.4.0-beta；源码 0.4.1-dev 未打包）
+## 发布包（最新：GitHub Release v0.1.0）
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/publish.ps1
+powershell -ExecutionPolicy Bypass -File scripts/publish.ps1 -Version 0.1.0
 ```
 
-生成 `artifacts/GhostScreen-0.4.0-beta-win-x64.zip`（约 172 MB，self-contained MCP/CLI/Tray）。版本号来自 `src/GhostScreen.Core/ProductInfo.cs`；SHA256 见同名 `.sha256` 文件。
-当前源码版本已是 `0.4.1-dev`（焦点安全修复）；重新打包会生成 `GhostScreen-0.4.1-dev-win-x64.zip`，不会覆盖 0.4.0-beta 的发布包。
+生成 `artifacts/GhostScreen-0.1.0-win-x64.zip`（约 172 MB，self-contained MCP/CLI/Tray），SHA256 见同名 `.sha256` 文件；zip 与校验和作为 GitHub Release 附件发布。
+版本号：不传 `-Version` 时用 `Directory.Build.props` 的开发线版本（当前 `0.5.0-dev`）；发布时传 `-Version`，经 `dotnet publish -p:Version` 写入，包内 `gs version` 显示发布版本。
 
 安装（可选，unsigned）：`powershell -ExecutionPolicy Bypass -File scripts/install.ps1`
 卸载：`powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Uninstall`
 
-说明：[0.4.0 beta 发布说明](doc/17-0.4.0-beta发布说明.md)；启动配方见 [doc/12-Recipes](doc/12-Recipes.md)。
+说明：[0.1.0 发布说明](doc/17-0.1.0发布说明.md)；启动配方见 [doc/12-Recipes](doc/12-Recipes.md)。
 
 完整数据与截图：[spike/REPORT.md](spike/REPORT.md) 与 `spike/evidence/`。
 
@@ -159,11 +161,11 @@ powershell -ExecutionPolicy Bypass -File scripts/publish.ps1
 | [spike/P2-MCP-REPORT.md](spike/P2-MCP-REPORT.md) | TargetManager + MCP stdio（13 工具）与集成测试 |
 | [08-MCP客户端配置](doc/08-MCP客户端配置.md) | Claude Code / Codex / Cursor / ZCode 配置与工作流 |
 | [12-Recipes](doc/12-Recipes.md) | 应用/网页启动配方、兼容矩阵、安全边界 |
-| [17-0.4.0 beta 发布说明](doc/17-0.4.0-beta发布说明.md) | 最近发布包：DPI-unaware 修复、托盘 per-target、VS Code 实测、安装脚本 |
+| [17-0.1.0 发布说明](doc/17-0.1.0发布说明.md) | 首个 GitHub Release：Human Consent Gate、gs doctor、焦点安全、性能；发布线独立编号 |
 | [18-技术栈](doc/18-技术栈.md) | 实际运行时、项目矩阵、Windows/CDP/MCP API 与依赖边界 |
 | [历史归档](doc/archive/README.md) | 市场调研与 0.1–0.3 旧发布说明（不再维护） |
 
-## 技术栈（0.5.0-dev 实际）
+## 技术栈（0.5.0-dev / 0.1.0 实际）
 
 - **C# / .NET 8**：Core 为 `net8.0`，Windows 项目为 `net8.0-windows10.0.19041.0`；nullable、analyzers、warnings-as-errors、deterministic
 - **零第三方 NuGet 运行时依赖**：只使用 BCL、Windows SDK/WinRT 投影和 Edge 自带协议

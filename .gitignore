@@ -34,6 +34,7 @@ state.json
 Thumbs.db
 .idea/
 .mimosa/
+.tmp-*/
 .vscode/*
 !.vscode/extensions.json
 !.vscode/launch.json

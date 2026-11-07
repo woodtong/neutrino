@@ -16,6 +16,22 @@ public static class WgcCapture
     private static readonly Lazy<GraphicsDevice> SharedDevice =
         new(CreateDevice, LazyThreadSafetyMode.ExecutionAndPublication);
 
+    /// <summary>
+    /// True when Windows.Graphics.Capture is usable on this machine. WGC is only
+    /// the fallback for visible windows; PrintWindow remains the main path either way.
+    /// </summary>
+    public static bool IsSupported()
+    {
+        try
+        {
+            return GraphicsCaptureSession.IsSupported();
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public static CaptureFrame Capture(IntPtr hwnd, int timeoutMs = 4_000)
     {
         if (!TryCapture(hwnd, timeoutMs, out var frame, out var error))

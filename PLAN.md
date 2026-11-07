@@ -17,11 +17,11 @@
 
 | 项 | 值 |
 |---|---|
-| 当前阶段 | **P4（0.5.0-dev：Human Consent Gate、UWP 回退待验证）** |
-| 代码状态 | MCP stdio **21 工具** + 状态端点 + 托盘协商窗；`0.5.0-dev`；测试 32/32（焦点不变量、WPF UIA、严格协商门） |
+| 当前阶段 | **P4（0.5.0-dev：Human Consent Gate、UWP 回退待验证）；已发布首个 GitHub Release **v0.1.0**（发布线独立编号）** |
+| 代码状态 | MCP stdio **21 工具** + 状态端点 + 托盘协商窗 + `gs doctor`；`0.5.0-dev`；测试 34/34（焦点不变量、WPF UIA、严格协商门、doctor） |
 | 下一动作 | **UWP 协商门实测；多 Agent 排队/允许 5 分钟；24h/4-target/混沌 soak；P4-04 混合 DPI/双屏/锁屏；干净机器验证** |
 | 阻塞 | 混合 DPI 需要第二块屏或 VDD；24h soak 需要长时间后台 |
-| 最近更新 | 2026-10-24 |
+| 最近更新 | 2026-11-07 |
 
 **阶段进度**
 
@@ -222,7 +222,8 @@
 - [x] **P2-06 MCP 服务器（基础）**（1.0d）：stdio、13 个工具、image content、结构化错误。
   - [ ] cancellation、MCP Inspector/真实客户端联调。
   - 验收：MCP Inspector 可见；真实客户端完成 3 场景。
-- [ ] **P2-07 `gs doctor`**（0.5d）：OS/Edge/token/WGC/停泊/端口/日志检查；`--bundle` 脱敏。
+- [x] **P2-07 `gs doctor`**（0.5d）：OS/Edge/token/WGC/停泊/端口/日志检查；`--bundle` 脱敏。
+  - 已实现（2026-11-05）：`gs doctor [--json] [--bundle path]`——OS 版本/架构、Edge 路径+版本、WGC 可用性、虚拟屏/停车点、state 目录与 journal 健康度、status.json 与端点可达性；异常项带下一步命令/文档链接；bundle 输出脱敏（用户名/token）。排障文档 `doc/19-Troubleshooting.md`（常见现象 + 错误码表）。
   - 验收：常见故障能给出下一步命令/文档链接。
 - [ ] **P2-08 集成测试**（1.0d）：FixtureApp/Notepad/Explorer；不变量；错误路径。
   - [x] MCP in-process 8/8（attach/shot/observe/click/set_text/close）；[ ] Notepad/Explorer/失败路径。
@@ -485,3 +486,4 @@
 | 2026-10-24 | v1.24 | 0.4.0-beta：DPI-unaware 捕获修复、托盘 per-target 列表/关闭、真实 VS Code attach、install.ps1；测试 28/28；5 分钟 4 目标 soak 0 失败；包 SHA256 1A87DC63…FCBC225 |
 | 2026-10-24 | v1.25 | 0.4.1-dev 焦点安全：UIA 动作会激活 WS_EX_NOACTIVATE 停泊窗口；原生元素动作改消息优先，无 HWND 时 UIA 自动执行 + FocusGuard 恢复（strict 可拒绝）；WPF 回退实测；测试夹具屏外、WGC/WPF 测试 opt-in；测试 29/29 |
 | 2026-10-24 | v1.26 | 0.5.0-dev Human Consent Gate：默认 strict；USER_ACTIVE/AWAITING_USER/USER_DENIED + consent_id；15s 倒计时非激活托盘窗；状态端点 consent；32/32 |
+| 2026-11-07 | v1.27 | P2-07 `gs doctor`（6 项检查 + 脱敏 bundle）+ doc/19 排障；34/34。首个 GitHub Release **v0.1.0**：发布线与开发线版本分离（包 = 0.5.0-dev + doctor 快照）；`publish.ps1 -Version` 经 `-p:Version` 覆盖包内版本；发布说明 doc/17 |
