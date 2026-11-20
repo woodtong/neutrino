@@ -320,8 +320,10 @@
 - [ ] **P4-11 v1.0.0 发布**（0.5d）：release notes、演示、公告。
   - 验收：v1.0 完成定义全部满足。
 - [x] **P4-12 窗口可见性与 end_turn（0.6.0-dev）**（1.0d）：agent 自判窗口归宿；人类可双向纠错。
-  - 已实现：`attach_window` 新增 `visibility`（`agent-only`｜`return-to-user`，缺省后者）；`agent-only` = 中间工具窗口全生命周期停泊、`close_target` 原地 `WM_CLOSE`（2s 宽限，拒绝则原样还原+`WINDOW_CLOSE_REFUSED` warning）；`return-to-user` = 关闭/进程退出原样还原。新工具 `show_to_user`/`park_window`（需 confirm）/`set_visibility`/`end_turn`（一轮归还所有 return-to-user 停泊窗口，target 保持 attached）；Target DTO 增 `visibility`/`zone`；journal 联动（归还即移除、重新停泊即登记）。
+  - 已实现：`attach_window` 新增 `visibility`（`agent-only`｜`return-to-user`，缺省后者）；`agent-only` = 中间工具窗口全生命周期停泊、`close_target` 原地 `WM_CLOSE`（4s 宽限，拒绝则原样还原+`WINDOW_CLOSE_REFUSED` warning）；`return-to-user` = 关闭/进程退出原样还原。新工具 `show_to_user`/`park_window`（需 confirm）/`set_visibility`/`end_turn`（一轮归还所有 return-to-user 停泊窗口，target 保持 attached）；Target DTO 增 `visibility`/`zone`；journal 联动（归还即移除、重新停泊即登记）。
   - 验收：40/40（默认值、end_turn 分流、双向移动+journal、agent-only 原地销毁、WM_CLOSE 拒绝兜底还原、MCP 全链路）。
+- [ ] **P4-13 提示/通知功能**（0.5d）：Tray toast 提醒「等你松手」（user-active 阻塞）与进程/目标问题（挂起、拒绝关闭已还原、启动恢复）。可行性已验证（2026-11-20 spike：`NotifyIcon.ShowBalloonTip` 零依赖渲染为 toast），设计草案见 `doc/20-功能TODO.md` §1。
+  - 验收（待细化）：user-active 连续阻塞 ≥4–6s 弹一次且 60s 冷却；degraded/恢复类事件弹一次；勿扰下不误报；不新增 NuGet 依赖。
 
 **Gate G4（发布闸门）**
 - [ ] 07 §2.2 全部通过。

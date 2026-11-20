@@ -12,7 +12,7 @@ window belongs and the human can always override in both directions.
   window is a deliverable, restored in place on close/exit) or `"agent-only"`
   (an intermediate tool window nobody needs to see — parked for its whole
   lifetime and closed in place via `WM_CLOSE` when released; if the app
-  refuses within the 2s grace period, e.g. a save prompt, it is restored to
+  refuses within the 4s grace period, e.g. a save prompt, it is restored to
   the user's desktop instead and `close_target` returns a
   `WINDOW_CLOSE_REFUSED` warning).
 - New tools (21 → 25): `show_to_user` (restore a parked window in place, no

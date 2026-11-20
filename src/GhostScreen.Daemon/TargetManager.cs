@@ -79,7 +79,7 @@ public sealed class TargetSession : ITarget
     private readonly InteractionPolicy _policy;
     private readonly IHumanActivityProbe _humanActivity;
     private static readonly TimeSpan HumanActiveThreshold = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan CloseGrace = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan CloseGrace = TimeSpan.FromSeconds(4);
     private IReadOnlyList<UiaElement> _lastObservation = [];
     private int _epoch;
     private bool _closed;
@@ -644,7 +644,7 @@ public sealed class TargetSession : ITarget
                 // strand the window off-screen: hand it back and say so.
                 _parked.Restore();
                 _lastCloseWarning =
-                    "WINDOW_CLOSE_REFUSED: the app ignored WM_CLOSE within the 2s grace period " +
+                    $"WINDOW_CLOSE_REFUSED: the app ignored WM_CLOSE within the {(int)CloseGrace.TotalSeconds}s grace period " +
                     "(it may be showing a save prompt). The window was restored to the user's " +
                     "desktop instead of being closed.";
                 return;
