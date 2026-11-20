@@ -3,6 +3,31 @@
 All notable changes are documented here. The format follows Keep a Changelog;
 the project aims to use Semantic Versioning once 1.0 ships.
 
+## [0.6.0-dev] - 2026-11-19
+
+Window visibility & end turn: the agent now declares where each attached
+window belongs and the human can always override in both directions.
+
+- `attach_window` accepts `visibility`: `"return-to-user"` (default — the
+  window is a deliverable, restored in place on close/exit) or `"agent-only"`
+  (an intermediate tool window nobody needs to see — parked for its whole
+  lifetime and closed in place via `WM_CLOSE` when released; if the app
+  refuses within the 2s grace period, e.g. a save prompt, it is restored to
+  the user's desktop instead and `close_target` returns a
+  `WINDOW_CLOSE_REFUSED` warning).
+- New tools (21 → 25): `show_to_user` (restore a parked window in place, no
+  confirm, idempotent), `park_window` (park a user-visible window again,
+  requires `confirm=true`), `set_visibility` (change the verdict without
+  moving the window), and `end_turn` (aggregated end-of-turn handoff:
+  restore every parked return-to-user window in one call, keep agent-only
+  windows parked; all targets stay attached).
+- Target DTO exposes `visibility` (declared intent) and `zone`
+  (`parked` | `user-visible`, actual position) as independent fields.
+- The journal tracks only parked windows: restoring removes the entry,
+  re-parking re-adds it, so crash recovery semantics are unchanged.
+- Server instructions now carry the visibility decision rule and the
+  end_turn closing habit for MCP client agents; 40/40 tests.
+
 ## [0.1.0] - 2026-11-07
 
 First GitHub release. Release-line versions start at 0.1.0 and are numbered

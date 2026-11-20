@@ -54,18 +54,38 @@ public interface ITarget : IDisposable
     void Close();
 }
 
+/// <summary>Who will ultimately look at a parked window.</summary>
+public enum WindowVisibility
+{
+    /// <summary>
+    /// The window is an intermediate tool the human never needs to see: it stays in
+    /// the agent-only zone for its whole life and is closed in place when released.
+    /// </summary>
+    AgentOnly,
+
+    /// <summary>
+    /// The window belongs to the human (default): it comes back to the user's
+    /// desktop, unchanged, at end_turn or when the target is closed.
+    /// </summary>
+    ReturnToUser,
+}
+
 /// <summary>A parked window owned by one agent session. Operations are serialized.</summary>
 public sealed class TargetSession : ITarget
 {
     private readonly object _gate = new();
-    private readonly ParkedWindow _parked;
+    private ParkedWindow _parked;
     private readonly ConsentManager _consents;
     private readonly InteractionPolicy _policy;
     private readonly IHumanActivityProbe _humanActivity;
     private static readonly TimeSpan HumanActiveThreshold = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan CloseGrace = TimeSpan.FromSeconds(2);
     private IReadOnlyList<UiaElement> _lastObservation = [];
     private int _epoch;
     private bool _closed;
+    private bool _userVisible;
+    private WindowVisibility _visibility;
+    private string? _lastCloseWarning;
     private int _consecutiveTimeouts;
     private string? _degradedReason;
     private Func<IntPtr, CaptureOptions, CaptureResult> _capture = CaptureEngine.Capture;
@@ -76,7 +96,8 @@ public sealed class TargetSession : ITarget
         ParkedWindow parked,
         ConsentManager consents,
         InteractionPolicy policy,
-        IHumanActivityProbe humanActivity)
+        IHumanActivityProbe humanActivity,
+        WindowVisibility visibility = WindowVisibility.ReturnToUser)
     {
         Id = id;
         Info = info;
@@ -84,6 +105,7 @@ public sealed class TargetSession : ITarget
         _consents = consents;
         _policy = policy;
         _humanActivity = humanActivity;
+        _visibility = visibility;
         CreatedAt = DateTimeOffset.UtcNow;
         LastUsed = CreatedAt;
     }
@@ -95,6 +117,48 @@ public sealed class TargetSession : ITarget
     internal ParkedWindow Parked => _parked;
 
     public WindowInfo Info { get; private set; }
+
+    /// <summary>What happens to this window when the agent is done with it.</summary>
+    public WindowVisibility Visibility
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _visibility;
+            }
+        }
+    }
+
+    /// <summary>True once the window has been handed back to the user's desktop.</summary>
+    public bool IsUserVisible
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _userVisible;
+            }
+        }
+    }
+
+    /// <summary>Where the window physically is right now: "parked" or "user-visible".</summary>
+    public string Zone => IsUserVisible ? "user-visible" : "parked";
+
+    /// <summary>Token form of <see cref="Visibility"/> used in DTOs and tool arguments.</summary>
+    public string VisibilityToken => Visibility == WindowVisibility.AgentOnly ? "agent-only" : "return-to-user";
+
+    /// <summary>Set when close had to fall back to restoring an agent-only window.</summary>
+    public string? LastCloseWarning
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _lastCloseWarning;
+            }
+        }
+    }
 
     public DateTimeOffset CreatedAt { get; }
 
@@ -472,6 +536,84 @@ public sealed class TargetSession : ITarget
         }
     }
 
+    /// <summary>Change the end-of-life plan without moving the window.</summary>
+    public void SetVisibility(WindowVisibility visibility)
+    {
+        lock (_gate)
+        {
+            EnsureOpen();
+            _visibility = visibility;
+            _lastCloseWarning = null;
+            Touch();
+        }
+    }
+
+    /// <summary>
+    /// Move the parked window back to its original on-screen placement, unchanged.
+    /// The target stays attached; only the physical zone changes.
+    /// </summary>
+    /// <returns>True when the window moved; false when it was already user-visible.</returns>
+    public bool ShowToUser()
+    {
+        lock (_gate)
+        {
+            EnsureOpen();
+            if (_userVisible)
+            {
+                Touch();
+                return false;
+            }
+
+            _parked.Restore();
+            _userVisible = true;
+            var refreshed = WindowEnumerator.Describe(Info.Handle);
+            if (refreshed is not null)
+            {
+                Info = refreshed;
+            }
+
+            Touch();
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Move a user-visible window back into the agent-only parking zone. The window
+    /// is re-parked exactly like a fresh attach: off-screen, out of the taskbar,
+    /// non-activatable, with its new placement snapshotted for restore.
+    /// </summary>
+    /// <returns>True when the window moved; false when it was already parked.</returns>
+    public bool ParkAgain()
+    {
+        lock (_gate)
+        {
+            EnsureOpen();
+            if (!_userVisible)
+            {
+                Touch();
+                return false;
+            }
+
+            if (WindowHealth.IsHung(Info.Handle))
+            {
+                throw new TargetException(
+                    "TARGET_HUNG",
+                    "Window is not responding; refusing to move it. Close/reopen the app and retry.");
+            }
+
+            var parked = ParkingManager.Park(Info.Handle);
+            WindowRepaint.Force(Info.Handle);
+            Thread.Sleep(150);
+            WindowRepaint.Force(Info.Handle);
+
+            _parked = parked;
+            _userVisible = false;
+            Info = WindowEnumerator.Describe(Info.Handle) ?? Info;
+            Touch();
+            return true;
+        }
+    }
+
     public void Close()
     {
         lock (_gate)
@@ -482,7 +624,33 @@ public sealed class TargetSession : ITarget
             }
 
             _closed = true;
-            _parked.Dispose();
+
+            if (_userVisible)
+            {
+                // The window is already in the human's hands; just detach.
+                return;
+            }
+
+            if (_visibility == WindowVisibility.AgentOnly)
+            {
+                // Intermediate tool window: close it in place so it never flashes
+                // on the user's desktop and leaves no orphan process behind.
+                if (WindowCloser.RequestClose(_parked.Handle, CloseGrace))
+                {
+                    return;
+                }
+
+                // The app refused WM_CLOSE (e.g. a save-changes prompt). Never
+                // strand the window off-screen: hand it back and say so.
+                _parked.Restore();
+                _lastCloseWarning =
+                    "WINDOW_CLOSE_REFUSED: the app ignored WM_CLOSE within the 2s grace period " +
+                    "(it may be showing a save prompt). The window was restored to the user's " +
+                    "desktop instead of being closed.";
+                return;
+            }
+
+            _parked.Restore();
         }
     }
 
@@ -492,6 +660,8 @@ public sealed class TargetSession : ITarget
         kind = "app",
         state = _closed ? "closed" : _degradedReason is null ? "ready" : "degraded",
         degraded_reason = _degradedReason,
+        visibility = _visibility == WindowVisibility.AgentOnly ? "agent-only" : "return-to-user",
+        zone = _userVisible ? "user-visible" : "parked",
         title = Info.Title,
         process = new { pid = Info.ProcessId, name = Info.ProcessName },
         window = new
@@ -582,7 +752,7 @@ public sealed class TargetManager : IDisposable
     /// <summary>What the crash journal restored/cleaned when this manager started.</summary>
     public RecoveryReport LastRecovery { get; }
 
-    public TargetSession Attach(IntPtr hwnd, bool confirm)
+    public TargetSession Attach(IntPtr hwnd, bool confirm, WindowVisibility visibility = WindowVisibility.ReturnToUser)
     {
         if (!confirm)
         {
@@ -623,7 +793,8 @@ public sealed class TargetManager : IDisposable
                 parked,
                 Consents,
                 Policy,
-                _humanActivity);
+                _humanActivity,
+                visibility);
             _journal.RecordApp(id, session);
 
             lock (_sync)
@@ -640,7 +811,10 @@ public sealed class TargetManager : IDisposable
         }
     }
 
-    public TargetSession AttachByTitle(string title, bool confirm)
+    public TargetSession AttachByTitle(
+        string title,
+        bool confirm,
+        WindowVisibility visibility = WindowVisibility.ReturnToUser)
     {
         var matches = WindowEnumerator.List()
             .Where(window => window.Title.Contains(title, StringComparison.OrdinalIgnoreCase))
@@ -652,7 +826,7 @@ public sealed class TargetManager : IDisposable
             > 1 => throw new TargetException(
                 "TARGET_AMBIGUOUS",
                 $"{matches.Length} windows match '{title}'; pass an explicit hwnd."),
-            _ => Attach(matches[0].Handle, confirm),
+            _ => Attach(matches[0].Handle, confirm, visibility),
         };
     }
 
@@ -826,6 +1000,85 @@ public sealed class TargetManager : IDisposable
         Get(id) as WebTargetSession
         ?? throw new TargetException("TARGET_KIND_MISMATCH", $"Target '{id}' is not a web page.");
 
+    /// <summary>Move one parked native window back to the user's desktop. The target stays attached.</summary>
+    public TargetSession ShowToUser(string id)
+    {
+        var session = GetNative(id);
+        if (session.ShowToUser())
+        {
+            // The window is back in the human's hands; a crash no longer needs to restore it.
+            _journal.Remove(id);
+        }
+
+        return session;
+    }
+
+    /// <summary>Move one user-visible native window back into the agent-only parking zone.</summary>
+    public TargetSession ParkWindow(string id)
+    {
+        var session = GetNative(id);
+        if (session.ParkAgain())
+        {
+            _journal.RecordApp(id, session);
+        }
+
+        return session;
+    }
+
+    /// <summary>
+    /// Finish the agent's turn: hand every parked return-to-user window back to the
+    /// human in one call. Agent-only windows stay parked and attached; the caller
+    /// still owns their lifecycle (close_target, close_all, or a later park re-use).
+    /// </summary>
+    public EndTurnReport EndTurn()
+    {
+        ITarget[] targets;
+        lock (_sync)
+        {
+            targets = _targets.Values.ToArray();
+        }
+
+        var restored = new List<string>();
+        var keptAgentOnly = 0;
+        var alreadyVisible = 0;
+        var webTargets = 0;
+
+        foreach (var target in targets)
+        {
+            if (target is not TargetSession native)
+            {
+                webTargets++;
+                continue;
+            }
+
+            try
+            {
+                if (native.IsUserVisible)
+                {
+                    alreadyVisible++;
+                }
+                else if (native.Visibility == WindowVisibility.ReturnToUser)
+                {
+                    if (native.ShowToUser())
+                    {
+                        _journal.Remove(native.Id);
+                        restored.Add(native.Id);
+                    }
+                }
+                else
+                {
+                    keptAgentOnly++;
+                }
+            }
+            catch (TargetException)
+            {
+                // The target was closed concurrently (e.g. a status-page panic).
+            }
+        }
+
+        return new EndTurnReport(restored, keptAgentOnly, alreadyVisible, webTargets);
+    }
+
     public bool Close(string id)
     {
         ITarget? session;
@@ -869,4 +1122,14 @@ public sealed class TargetManager : IDisposable
     }
 
     public void Dispose() => CloseAll();
+}
+
+/// <summary>Outcome of one end_turn call: which windows went back to the human.</summary>
+public sealed record EndTurnReport(
+    IReadOnlyList<string> RestoredIds,
+    int KeptAgentOnly,
+    int AlreadyUserVisible,
+    int WebTargets)
+{
+    public int RestoredToUser => RestoredIds.Count;
 }

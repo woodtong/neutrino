@@ -199,7 +199,15 @@ public sealed class McpServer
                 "HWND-backed controls use window messages; WPF/UWP controls use UIA. In strict mode (default), a focus-requiring " +
                 "UIA action returns USER_ACTIVE while a human is using the desktop; retry with backoff. After several attempts the " +
                 "server returns AWAITING_USER with a consent_id and shows a non-activating prompt; retry with that consent_id. " +
-                "USER_DENIED is terminal for that request. Nothing is sent to the cloud.",
+                "USER_DENIED is terminal for that request. Nothing is sent to the cloud. " +
+                "Window visibility: when attaching, judge whether the human will ever need the window. Intermediate tooling you " +
+                "drive yourself (scratch editors, viewers, helper apps the human did not ask to see) -> visibility=agent-only: the " +
+                "window stays off-screen its whole life and is closed in place at close_target. Windows the human asked about, " +
+                "created for them, or expected to reuse -> visibility=return-to-user (default): restored unchanged. " +
+                "Call end_turn once when your turn ends: it hands every parked return-to-user window back to the human in one call " +
+                "while targets stay attached. A human can always correct a misjudgment: show_to_user moves one window to the " +
+                "user's desktop, park_window (confirm=true) moves it back to the agent zone, set_visibility changes the plan " +
+                "without moving anything.",
         };
     }
 
@@ -224,6 +232,10 @@ public sealed class McpServer
             "open_web" => await OpenWebAsync(args),
             "attach_cdp" => await AttachCdpAsync(args),
             "list_targets" => ListTargets(),
+            "show_to_user" => ShowToUserTool(args),
+            "park_window" => ParkWindowTool(args),
+            "set_visibility" => SetVisibilityTool(args),
+            "end_turn" => EndTurnTool(),
             "screenshot" => await ScreenshotAsync(args),
             "snapshot" => await SnapshotAsync(args),
             "observe" => await ObserveAsync(args),
@@ -271,13 +283,14 @@ public sealed class McpServer
     private object AttachWindow(JsonElement args)
     {
         var confirm = GetBool(args, "confirm", false);
+        var visibility = ParseVisibility(args);
         var hwndText = GetString(args, "hwnd");
         TargetSession session;
 
         if (!string.IsNullOrWhiteSpace(hwndText))
         {
             var hwnd = ParseHandle(hwndText);
-            session = _manager.Attach(hwnd, confirm);
+            session = _manager.Attach(hwnd, confirm, visibility);
         }
         else
         {
@@ -287,10 +300,66 @@ public sealed class McpServer
                 return ErrorResult("INVALID_ARGUMENTS", "attach_window requires hwnd or title.");
             }
 
-            session = _manager.AttachByTitle(title, confirm);
+            session = _manager.AttachByTitle(title, confirm, visibility);
         }
 
         return TextResult(JsonSerializer.Serialize(session.ToDto(), JsonOptions));
+    }
+
+    private static WindowVisibility ParseVisibility(JsonElement args)
+    {
+        var text = GetString(args, "visibility");
+        return text switch
+        {
+            null or "" => WindowVisibility.ReturnToUser,
+            "agent-only" => WindowVisibility.AgentOnly,
+            "return-to-user" => WindowVisibility.ReturnToUser,
+            _ => throw new TargetException(
+                "INVALID_ARGUMENTS",
+                "visibility must be \"agent-only\" or \"return-to-user\"."),
+        };
+    }
+
+    private object ShowToUserTool(JsonElement args)
+    {
+        var session = _manager.ShowToUser(GetTargetId(args));
+        return TextResult(JsonSerializer.Serialize(session.ToDto(), JsonOptions));
+    }
+
+    private object ParkWindowTool(JsonElement args)
+    {
+        var confirm = GetBool(args, "confirm", false);
+        if (!confirm)
+        {
+            return ErrorResult(
+                "CONFIRM_REQUIRED",
+                "park_window moves a window the user may be looking at off-screen; pass confirm=true.");
+        }
+
+        var session = _manager.ParkWindow(GetTargetId(args));
+        return TextResult(JsonSerializer.Serialize(session.ToDto(), JsonOptions));
+    }
+
+    private object SetVisibilityTool(JsonElement args)
+    {
+        var visibility = ParseVisibility(args);
+        var session = _manager.GetNative(GetTargetId(args));
+        session.SetVisibility(visibility);
+        return TextResult(JsonSerializer.Serialize(session.ToDto(), JsonOptions));
+    }
+
+    private object EndTurnTool()
+    {
+        var report = _manager.EndTurn();
+        return TextResult(JsonSerializer.Serialize(new
+        {
+            ok = true,
+            restored_to_user = report.RestoredToUser,
+            restored_ids = report.RestoredIds,
+            kept_agent_only = report.KeptAgentOnly,
+            already_user_visible = report.AlreadyUserVisible,
+            web_targets = report.WebTargets,
+        }, JsonOptions));
     }
 
     private object ListTargets()
@@ -846,7 +915,14 @@ public sealed class McpServer
     {
         var target = GetTarget(args);
         var ok = _manager.Close(target.Id);
-        return TextResult(JsonSerializer.Serialize(new { ok, target_id = target.Id }, JsonOptions));
+
+        var payload = new Dictionary<string, object?> { ["ok"] = ok, ["target_id"] = target.Id };
+        if (target is TargetSession native && !string.IsNullOrWhiteSpace(native.LastCloseWarning))
+        {
+            payload["warning"] = native.LastCloseWarning;
+        }
+
+        return TextResult(JsonSerializer.Serialize(payload, JsonOptions));
     }
 
     private object CloseAll()
@@ -880,11 +956,12 @@ public sealed class McpServer
             []),
         Tool(
             "attach_window",
-            "Park an existing window off-screen and return a target_id. Moves the window; confirm must be true.",
+            "Park an existing window off-screen and return a target_id. Moves the window; confirm must be true. visibility: agent-only = intermediate tool window the human never needs (stays off-screen its whole life, closed in place when released); return-to-user (default) = restored unchanged to the user at end_turn/close.",
             Props(
                 ("hwnd", "string", "Window handle (hex, e.g. 0x1234)."),
                 ("title", "string", "Unique title substring; alternative to hwnd."),
-                ("confirm", "boolean", "Must be true to move the window.")),
+                ("confirm", "boolean", "Must be true to move the window."),
+                ("visibility", "string", "\"agent-only\" or \"return-to-user\" (default).")),
             ["confirm"]),
         Tool(
             "open_web",
@@ -905,6 +982,25 @@ public sealed class McpServer
                 ("page_url", "string", "Optional URL substring to pick a page target.")),
             ["port"]),
         Tool("list_targets", "List currently attached targets (native windows and web pages).", Props(), []),
+        Tool(
+            "show_to_user",
+            "Move one parked window back to its original on-screen placement, unchanged. The target stays attached; zone becomes user-visible. Use when the human asks to see a window, or when the agent misjudged visibility.",
+            Props(("target_id", "string", "Target id.")),
+            ["target_id"]),
+        Tool(
+            "park_window",
+            "Move a user-visible window back into the agent-only off-screen zone (reverse of show_to_user). confirm must be true because it takes a window away from the human's screen.",
+            Props(
+                ("target_id", "string", "Target id."),
+                ("confirm", "boolean", "Must be true to move the window off-screen.")),
+            ["target_id", "confirm"]),
+        Tool(
+            "set_visibility",
+            "Change what happens to a native window when the agent is done, without moving it: agent-only = closed in place at close/end; return-to-user = restored unchanged at end_turn/close.",
+            Props(
+                ("target_id", "string", "Target id."),
+                ("visibility", "string", "\"agent-only\" or \"return-to-user\".")),
+            ["target_id", "visibility"]),
         Tool(
             "screenshot",
             "Capture the target as a PNG plus metadata. Native: PrintWindow/WGC of the client area. Web: CDP viewport, full_page, or clip (CSS pixels).",
@@ -1028,11 +1124,16 @@ public sealed class McpServer
                 ("max_chars", "integer", "Truncation limit; default 200000.")),
             ["target_id"]),
         Tool(
+            "end_turn",
+            "Finish the turn: restore every parked return-to-user window to the user's desktop in one call (targets stay attached). Agent-only windows stay parked off-screen for later close_target. Call this once when replying to the human.",
+            Props(),
+            []),
+        Tool(
             "close_target",
-            "Restore and release one target. Web targets close their headless browser and delete the temp profile.",
+            "Release one target. Native return-to-user windows are restored unchanged to the user's desktop; agent-only windows are closed in place (WM_CLOSE) and never reappear — if the app refuses to close, the window is restored instead and a warning is returned. Web targets close their headless browser and delete the temp profile.",
             Props(("target_id", "string", "Target id.")),
             ["target_id"]),
-        Tool("close_all", "Restore all targets (panic).", Props(), []),
+        Tool("close_all", "Release every target (panic): return-to-user windows are restored, agent-only windows are closed in place, web targets are closed.", Props(), []),
     ];
 
     private static object Tool(

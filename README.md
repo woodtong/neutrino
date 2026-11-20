@@ -6,7 +6,7 @@
 
 应用窗口在系统里照常真实渲染，但不出现在人的显示器上。Agent 可以随时截图、点击、输入；人继续自己的工作，不闪窗、不被抢焦点、不被抢鼠标。
 
-> 状态：开发线 **0.5.0-dev**，对外首个 GitHub Release **[v0.1.0](https://github.com/woodtong/neutrino/releases/tag/v0.1.0)**（发布线从 0.1.0 起独立编号，与开发线分开）。含崩溃恢复、挂起拒绝、DPI-unaware 修复、状态页/托盘（per-target 关闭 + 协商窗）、`attach_cdp`（VS Code/Electron）、Human Consent Gate、`gs doctor`、soak harness 与 unsigned 安装脚本；MCP **21 工具**，测试 **34/34**。产品仍早期。
+> 状态：开发线 **0.6.0-dev**，对外首个 GitHub Release **[v0.1.0](https://github.com/woodtong/neutrino/releases/tag/v0.1.0)**（发布线从 0.1.0 起独立编号，与开发线分开）。含崩溃恢复、挂起拒绝、DPI-unaware 修复、状态页/托盘（per-target 关闭 + 协商窗）、`attach_cdp`（VS Code/Electron）、Human Consent Gate、`gs doctor`、soak harness、窗口可见性判定与 `end_turn`（agent-only/return-to-user）及 unsigned 安装脚本；MCP **25 工具**，测试 **40/40**。产品仍早期。
 > 关键实测：WGC 对完全离屏窗口会冻结；PrintWindow 离屏实时（p50≈12ms）。架构已改为 **PrintWindow 主捕获 + WGC 可见/VDD + CDP 网页**。
 > 定位：**开源项目（Apache-2.0）**，不做商业产品；工程质量、兼容性、可维护性优先。执行计划见 [07-开源项目规划](doc/07-开源项目规划.md)。
 > 工作名可改，不影响设计。
@@ -19,6 +19,7 @@
 - ✅ **P1/P2**：原生元素动作**消息优先**（HWND 子控件 `BM_CLICK`/`WM_SETTEXT`）；没有 HWND 的 WPF/UWP 控件自动走 UIA（Invoke/Toggle/SelectionItem/ExpandCollapse）并恢复前台；只有控件完全没有可执行 pattern 时才返回 `ELEMENT_NOT_ACTIONABLE`。
 - ✅ **P4（0.4.1-dev）**：焦点安全修复——UIA 动作即使窗口带 `WS_EX_NOACTIVATE` 也会短暂激活；消息优先，UIA 由 `FocusGuard` 恢复前台。
 - ✅ **P4（0.5.0-dev）**：Human Consent Gate——默认 `strict`；人在用时 UIA 动作先返回可重试的 `USER_ACTIVE`，3 次后弹非激活协商窗（允许/拒绝/15 秒倒计时），Agent 带 `consent_id` 重试执行；消息/CDP 路径永不被门禁阻塞。
+- ✅ **P4（0.6.0-dev）**：窗口可见性与 `end_turn`——`attach_window` 声明 `visibility`（中间工具窗口 `agent-only` 全生命周期停泊、原地优雅关闭；产物窗口 `return-to-user` 原样归还）；`show_to_user`/`park_window` 双向稳定移动（人可随时纠错）、`set_visibility` 改判定、`end_turn` 一轮聚合归还。
 - ✅ **P2**：TargetManager + MCP stdio（20 工具）；截图默认客户区裁剪；EOF 自动还原；in-process 测试。
 - ✅ **P3**：`open_web` 启动私有**无头 Edge**（无窗口、独立临时 profile）；截图/observe/点击/输入/按键/滚动/拖拽/console/视口/导航全部经 CDP；关 target 即杀进程并删 profile。
 - ✅ **P3**：整页截图与 clip、network idle、多视口 `snapshot`（横向溢出 + 越界元素定位）、`network` 失败诊断；100 次开关 0 失败、句柄/内存封顶、profile 0。
@@ -110,7 +111,7 @@ powershell -ExecutionPolicy Bypass -File scripts/publish.ps1 -Version 0.1.0
 ```
 
 生成 `artifacts/GhostScreen-0.1.0-win-x64.zip`（约 172 MB，self-contained MCP/CLI/Tray），SHA256 见同名 `.sha256` 文件；zip 与校验和作为 GitHub Release 附件发布。
-版本号：不传 `-Version` 时用 `Directory.Build.props` 的开发线版本（当前 `0.5.0-dev`）；发布时传 `-Version`，经 `dotnet publish -p:Version` 写入，包内 `gs version` 显示发布版本。
+版本号：不传 `-Version` 时用 `Directory.Build.props` 的开发线版本（当前 `0.6.0-dev`）；发布时传 `-Version`，经 `dotnet publish -p:Version` 写入，包内 `gs version` 显示发布版本。
 
 安装（可选，unsigned）：`powershell -ExecutionPolicy Bypass -File scripts/install.ps1`
 卸载：`powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Uninstall`
@@ -172,7 +173,7 @@ powershell -ExecutionPolicy Bypass -File scripts/publish.ps1 -Version 0.1.0
 - **捕获**：PrintWindow `PW_RENDERFULLCONTENT` + GDI（离屏主路径）；Windows.Graphics.Capture + Direct3D11（仅可见/VDD）；WinRT `BitmapEncoder` 编码 PNG
 - **观测/输入**：`System.Windows.Automation`（UIA）；Win32 窗口消息（`BM_CLICK`/`WM_*`/`WM_SETTEXT`）；默认不用 SendInput；FocusGuard + Human Consent Gate
 - **网页**：无头 Edge + CDP（`ClientWebSocket` + JSON-RPC）；私有临时 profile；`CreateProcessW` 启动，无 shell
-- **Agent 接口**：手写 MCP stdio（JSON-RPC 2.0，21 工具）；无 MCP SDK 运行时依赖
+- **Agent 接口**：手写 MCP stdio（JSON-RPC 2.0，25 工具）；无 MCP SDK 运行时依赖
 - **本地控制面**：原始 `TcpListener` + 手写 HTTP/1.1（127.0.0.1 + token），**不是 ASP.NET Core/Http.sys**；WinForms 托盘 + 非激活协商窗
 - **测试/CI**：自写零依赖测试 runner（32 项）；GitHub Actions `windows-2022`；CodeQL 仅在 public 仓库运行
 - **打包**：`dotnet publish` self-contained single-file `win-x64`；zip + SHA256；unsigned

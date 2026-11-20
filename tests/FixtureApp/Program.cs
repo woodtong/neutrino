@@ -206,6 +206,19 @@ internal sealed class FixtureForm : Form
 
     public string KeyHistory => string.Join("|", _keyHistory);
 
+    /// <summary>When true, FormClosing cancels: the window refuses WM_CLOSE (save-prompt simulation).</summary>
+    public bool VetoClose { get; set; }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (VetoClose)
+        {
+            e.Cancel = true;
+        }
+
+        base.OnFormClosing(e);
+    }
+
     protected override bool ShowWithoutActivation => true;
 
     protected override CreateParams CreateParams
@@ -299,13 +312,25 @@ public sealed class FixtureInstance : IDisposable
         _form.BeginInvoke(new Action(() => Thread.Sleep(milliseconds)));
     }
 
+    /// <summary>Make the window refuse WM_CLOSE (save-prompt simulation). Remember to clear it before Close().</summary>
+    public bool VetoClose
+    {
+        get => (bool)_form.Invoke(new Func<bool>(() => _form.VetoClose));
+        set => _form.Invoke(new Action(() => _form.VetoClose = value));
+    }
+
     public void Close()
     {
         try
         {
             if (!_form.IsDisposed)
             {
-                _form.Invoke(new Action(() => _form.Close()));
+                _form.Invoke(new Action(() =>
+                {
+                    // Teardown must always win over a veto left on by a test.
+                    _form.VetoClose = false;
+                    _form.Close();
+                }));
             }
         }
         catch

@@ -3,7 +3,7 @@
     <!-- Development-line version. Release builds override this with
          `dotnet publish -p:Version=...` (see scripts/publish.ps1), so the
          product version shown by the binaries always matches the release. -->
-    <Version>0.5.0-dev</Version>
+    <Version>0.6.0-dev</Version>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>

@@ -134,4 +134,12 @@ close_target { target_id }
 - 默认不使用 `SendInput`；不动真实光标、不抢前台、不碰剪贴板。
 - `open_web` 只允许 http/https/file/about；拒绝 `-` 开头与未知 scheme，避免浏览器参数注入。
 - 不注入 DLL、不挂钩 API、不安装驱动、不收集遥测、不联网上报。
+
+## 12. 窗口归宿：agent-only vs return-to-user（0.6.0-dev）
+
+- **判定**：窗口是任务产物、用户要看 → `attach_window {visibility: "return-to-user"}`（默认，拿不准就用它）；只是中间工具、没人看 → `visibility: "agent-only"`，全生命周期停在 agent 区，关闭时原地 `WM_CLOSE`，不回用户桌面。
+- **收尾习惯**：每轮对话结束调一次 `end_turn`——所有 return-to-user 停泊窗口一次归还原位，agent-only 的留在停泊区；target 全部保持 attached，下轮继续用。
+- **人类纠错**：agent 误判时，直接要求 `show_to_user {target_id}`（归还，免 confirm）或 `park_window {target_id, confirm: true}`（重新停泊，动用户的窗口故需确认）；也可 `set_visibility` 改判定后 `end_turn` 执行。
+- **拒绝关闭兜底**：agent-only 窗口若有保存对话框拒绝关闭，`close_target` 返回 `warning: "WINDOW_CLOSE_REFUSED…"` 并把窗口**原样还原**到用户桌面——看到该 warning 就说明窗口已交还人类处置，不要再 park 回去。
+- 例子：临时开一个查看器确认导出结果 → `agent-only` + 用完 `close_target`；帮用户填完一张表单窗口 → 默认 return-to-user + `end_turn` 归位。
 - 截图默认只在内存中，写入磁盘由调用方显式指定。

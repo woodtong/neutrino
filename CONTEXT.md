@@ -31,7 +31,7 @@ src/GhostScreen.Capture     PrintWindow（6s 超时/专用线程）、WGC、Capt
 src/GhostScreen.Input       UIA 观测；窗口消息 click/scroll/drag/key/set_text（HWND 子控件）
 src/GhostScreen.Web         EdgeLauncher（无头 Edge/临时 profile/DevToolsActivePort）、CDP 客户端、CdpKeys、PNG 尺寸
 src/GhostScreen.Daemon      ITarget/TargetManager、TargetSession（原生/消息优先）、ConsentManager、WebTargetSession、InputRouter、TargetJournal、StatusServer
-src/GhostScreen.Mcp         手写 MCP stdio，21 工具（异步）+ 状态端点启动
+src/GhostScreen.Mcp         手写 MCP stdio，25 工具（异步）+ 状态端点启动
 src/GhostScreen.Cli         gs version/state/list/shot（一次性，原生）
 src/GhostScreen.Tray        NotifyIcon：状态轮询/per-target 列表与关闭/打开状态页/急停/退出 + 非激活协商窗（独立小进程）
 tests/FixtureApp            WinForms 夹具（按钮/输入框/列表/动画/拖拽/滚轮/品红标记）

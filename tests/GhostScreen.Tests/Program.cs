@@ -1235,6 +1235,12 @@ var tests = new (string Name, Action Body)[]
     }),
     ("MCP attach/capture/observe/act/close", RunMcpRoundTrip),
     ("MCP web open/capture/observe/act/close", RunWebMcpRoundTrip),
+    ("Visibility: attach defaults to return-to-user and exposes zone", RunVisibilityDefaults),
+    ("end_turn restores return-to-user windows and keeps agent-only parked", RunEndTurnSplit),
+    ("show_to_user and park_window move the window both ways", RunZoneRoundTrip),
+    ("agent-only close destroys the window in place", RunAgentOnlyClose),
+    ("MCP visibility: show_to_user/park_window/set_visibility/end_turn", RunVisibilityMcpRoundTrip),
+    ("agent-only window that refuses WM_CLOSE is restored with a warning", RunRefusedClose),
 };
 
 var failures = 0;
@@ -1929,6 +1935,407 @@ static void RunMcpRoundTrip()
             // Surface the test failure rather than hanging.
         }
 
+        manager.CloseAll();
+        fixture.Close();
+    }
+}
+
+static void RunVisibilityDefaults()
+{
+    if (!Environment.UserInteractive ||
+        !System.Windows.Forms.SystemInformation.UserInteractive)
+    {
+        Console.WriteLine("SKIP visibility defaults: no interactive desktop.");
+        return;
+    }
+
+    var tempDirectory = Path.Combine(
+        Path.GetTempPath(),
+        "ghostscreen-vis-default-" + Guid.NewGuid().ToString("N")[..8]);
+    Directory.CreateDirectory(tempDirectory);
+
+    using var fixture = StartFixtureOffscreen();
+    Thread.Sleep(250);
+    using var manager = new TargetManager(new TargetJournal(
+        Path.Combine(tempDirectory, "targets.json"),
+        Path.Combine(tempDirectory, "profiles")));
+
+    try
+    {
+        var session = manager.Attach(fixture.Handle, confirm: true);
+        Assert(session.Visibility == WindowVisibility.ReturnToUser, "default visibility enum");
+        Assert(session.Zone == "parked", "default zone property");
+
+        using var dto = JsonDocument.Parse(JsonSerializer.Serialize(session.ToDto()));
+        var root = dto.RootElement;
+        Assert(root.GetProperty("visibility").GetString() == "return-to-user", "dto visibility");
+        Assert(root.GetProperty("zone").GetString() == "parked", "dto zone");
+    }
+    finally
+    {
+        manager.Dispose();
+        fixture.Close();
+
+        try
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+        catch
+        {
+            // Best effort.
+        }
+    }
+}
+
+static void RunEndTurnSplit()
+{
+    if (!Environment.UserInteractive ||
+        !System.Windows.Forms.SystemInformation.UserInteractive)
+    {
+        Console.WriteLine("SKIP end_turn split: no interactive desktop.");
+        return;
+    }
+
+    var tempDirectory = Path.Combine(
+        Path.GetTempPath(),
+        "ghostscreen-end-turn-" + Guid.NewGuid().ToString("N")[..8]);
+    Directory.CreateDirectory(tempDirectory);
+    var journalPath = Path.Combine(tempDirectory, "targets.json");
+
+    using var fixtureUser = StartFixtureOffscreen();
+    using var fixtureAgent = StartFixtureOffscreen();
+    Thread.Sleep(250);
+    var originalUser = WindowEnumerator.Describe(fixtureUser.Handle)!.Bounds;
+
+    using var manager = new TargetManager(new TargetJournal(
+        journalPath,
+        Path.Combine(tempDirectory, "profiles")));
+
+    try
+    {
+        var userSession = manager.Attach(fixtureUser.Handle, confirm: true);
+        var agentSession = manager.Attach(fixtureAgent.Handle, confirm: true, WindowVisibility.AgentOnly);
+
+        var journal = File.ReadAllText(journalPath);
+        Assert(journal.Contains(userSession.Id, StringComparison.Ordinal), "journal has return-to-user entry");
+        Assert(journal.Contains(agentSession.Id, StringComparison.Ordinal), "journal has agent-only entry");
+
+        var report = manager.EndTurn();
+        Assert(report.RestoredToUser == 1, $"one window restored, got {report.RestoredToUser}");
+        Assert(report.RestoredIds[0] == userSession.Id, "restored id");
+        Assert(report.KeptAgentOnly == 1, "one window kept agent-only");
+
+        AssertRestored(
+            originalUser,
+            WindowEnumerator.Describe(fixtureUser.Handle)!.Bounds,
+            "end_turn return-to-user");
+        Assert(
+            DisplayInfo.Get().IsFullyOffscreen(WindowEnumerator.Describe(fixtureAgent.Handle)!.Bounds),
+            "agent-only window stays parked after end_turn");
+        Assert(userSession.Zone == "user-visible", "user zone after end_turn");
+        Assert(agentSession.Zone == "parked", "agent zone after end_turn");
+        Assert(manager.List().Count == 2, "both targets stay attached");
+
+        journal = File.ReadAllText(journalPath);
+        Assert(!journal.Contains(userSession.Id, StringComparison.Ordinal), "restored entry removed from journal");
+        Assert(journal.Contains(agentSession.Id, StringComparison.Ordinal), "agent-only entry kept in journal");
+    }
+    finally
+    {
+        manager.Dispose();
+        fixtureUser.Close();
+        fixtureAgent.Close();
+
+        try
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+        catch
+        {
+            // Best effort.
+        }
+    }
+}
+
+static void RunZoneRoundTrip()
+{
+    if (!Environment.UserInteractive ||
+        !System.Windows.Forms.SystemInformation.UserInteractive)
+    {
+        Console.WriteLine("SKIP zone round-trip: no interactive desktop.");
+        return;
+    }
+
+    var tempDirectory = Path.Combine(
+        Path.GetTempPath(),
+        "ghostscreen-zone-" + Guid.NewGuid().ToString("N")[..8]);
+    Directory.CreateDirectory(tempDirectory);
+    var journalPath = Path.Combine(tempDirectory, "targets.json");
+
+    using var fixture = StartFixtureOffscreen();
+    Thread.Sleep(250);
+    var original = WindowEnumerator.Describe(fixture.Handle)!.Bounds;
+
+    using var manager = new TargetManager(new TargetJournal(
+        journalPath,
+        Path.Combine(tempDirectory, "profiles")));
+
+    try
+    {
+        var session = manager.Attach(fixture.Handle, confirm: true, WindowVisibility.AgentOnly);
+        Assert(session.Zone == "parked", "starts parked");
+
+        manager.ShowToUser(session.Id);
+        AssertRestored(original, WindowEnumerator.Describe(fixture.Handle)!.Bounds, "show_to_user");
+        Assert(session.Zone == "user-visible", "zone after show_to_user");
+        Assert(!File.Exists(journalPath), "journal cleared after show_to_user");
+
+        manager.ParkWindow(session.Id);
+        Assert(
+            DisplayInfo.Get().IsFullyOffscreen(WindowEnumerator.Describe(fixture.Handle)!.Bounds),
+            "window parked again");
+        Assert(session.Zone == "parked", "zone after park_window");
+        Assert(File.Exists(journalPath), "journal re-recorded after park_window");
+        Assert(
+            File.ReadAllText(journalPath).Contains(session.Id, StringComparison.Ordinal),
+            "re-recorded journal entry contains the id");
+
+        // Idempotence: repeating a zone call keeps the window where it is.
+        manager.ShowToUser(session.Id);
+        manager.ShowToUser(session.Id);
+        AssertRestored(original, WindowEnumerator.Describe(fixture.Handle)!.Bounds, "repeated show_to_user");
+
+        manager.ParkWindow(session.Id);
+        manager.ParkWindow(session.Id);
+        Assert(
+            DisplayInfo.Get().IsFullyOffscreen(WindowEnumerator.Describe(fixture.Handle)!.Bounds),
+            "repeated park_window");
+    }
+    finally
+    {
+        manager.Dispose();
+        fixture.Close();
+
+        try
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+        catch
+        {
+            // Best effort.
+        }
+    }
+}
+
+static void RunAgentOnlyClose()
+{
+    if (!Environment.UserInteractive ||
+        !System.Windows.Forms.SystemInformation.UserInteractive)
+    {
+        Console.WriteLine("SKIP agent-only close: no interactive desktop.");
+        return;
+    }
+
+    var tempDirectory = Path.Combine(
+        Path.GetTempPath(),
+        "ghostscreen-agent-close-" + Guid.NewGuid().ToString("N")[..8]);
+    Directory.CreateDirectory(tempDirectory);
+    var journalPath = Path.Combine(tempDirectory, "targets.json");
+
+    using var fixture = StartFixtureOffscreen();
+    Thread.Sleep(250);
+    using var manager = new TargetManager(new TargetJournal(
+        journalPath,
+        Path.Combine(tempDirectory, "profiles")));
+
+    try
+    {
+        // Capture the handle up front: accessing FixtureInstance.Handle after the
+        // form is disposed by WM_CLOSE would throw.
+        var handle = fixture.Handle;
+        var session = manager.Attach(handle, confirm: true, WindowVisibility.AgentOnly);
+        Assert(manager.Close(session.Id), "close returns true");
+        WaitUntil(
+            () => WindowEnumerator.Describe(handle) is null,
+            "agent-only window was not destroyed in place",
+            timeoutMs: 3_000);
+        Assert(!File.Exists(journalPath), "journal cleared after in-place close");
+        Assert(manager.List().Count == 0, "target removed");
+        Assert(session.LastCloseWarning is null, "no close warning for a cooperative app");
+    }
+    finally
+    {
+        manager.Dispose();
+        fixture.Close();
+
+        try
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+        catch
+        {
+            // Best effort.
+        }
+    }
+}
+
+static void RunVisibilityMcpRoundTrip()
+{
+    if (!Environment.UserInteractive ||
+        !System.Windows.Forms.SystemInformation.UserInteractive)
+    {
+        Console.WriteLine("SKIP MCP visibility round-trip: no interactive desktop.");
+        return;
+    }
+
+    using var fixture = StartFixtureOffscreen();
+    Thread.Sleep(250);
+    var original = WindowEnumerator.Describe(fixture.Handle)!.Bounds;
+
+    using var manager = new TargetManager();
+    using var client = new McpTestClient(manager);
+
+    string DtoText(string tool, object arguments)
+    {
+        return McpTestClient.Text(client.Tool(tool, arguments));
+    }
+
+    try
+    {
+        client.Call("initialize", new
+        {
+            protocolVersion = "2024-11-05",
+            capabilities = new { },
+            clientInfo = new { name = "ghostscreen-visibility-test", version = "0" },
+        });
+
+        var tools = client.Call("tools/list");
+        var toolNames = tools.GetProperty("tools").EnumerateArray()
+            .Select(tool => tool.GetProperty("name").GetString())
+            .ToArray();
+        foreach (var expected in new[] { "show_to_user", "park_window", "set_visibility", "end_turn" })
+        {
+            Assert(toolNames.Contains(expected), $"{expected} tool");
+        }
+
+        var attachText = DtoText("attach_window", new
+        {
+            hwnd = $"0x{fixture.Handle.ToInt64():X}",
+            confirm = true,
+            visibility = "agent-only",
+        });
+        using var attachDocument = JsonDocument.Parse(attachText);
+        var targetId = attachDocument.RootElement.GetProperty("id").GetString()!;
+        Assert(attachDocument.RootElement.GetProperty("visibility").GetString() == "agent-only", "attach visibility");
+        Assert(attachDocument.RootElement.GetProperty("zone").GetString() == "parked", "attach zone");
+
+        // end_turn keeps an agent-only window parked.
+        var endKeep = JsonDocument.Parse(DtoText("end_turn", new { })).RootElement;
+        Assert(endKeep.GetProperty("kept_agent_only").GetInt32() == 1, "end_turn kept agent-only");
+        Assert(endKeep.GetProperty("restored_to_user").GetInt32() == 0, "end_turn restored nothing");
+        Assert(
+            DisplayInfo.Get().IsFullyOffscreen(WindowEnumerator.Describe(fixture.Handle)!.Bounds),
+            "window still parked after end_turn");
+
+        // show_to_user hands the window to the human without detaching.
+        var show = JsonDocument.Parse(DtoText("show_to_user", new { target_id = targetId })).RootElement;
+        Assert(show.GetProperty("zone").GetString() == "user-visible", "show_to_user zone");
+        AssertRestored(original, WindowEnumerator.Describe(fixture.Handle)!.Bounds, "mcp show_to_user");
+
+        // park_window is gated like attach.
+        var refused = DtoText("park_window", new { target_id = targetId });
+        Assert(
+            refused.Contains("CONFIRM_REQUIRED", StringComparison.Ordinal),
+            $"park_window without confirm must refuse: {refused}");
+
+        var park = JsonDocument.Parse(DtoText("park_window", new { target_id = targetId, confirm = true })).RootElement;
+        Assert(park.GetProperty("zone").GetString() == "parked", "park_window zone");
+        Assert(
+            DisplayInfo.Get().IsFullyOffscreen(WindowEnumerator.Describe(fixture.Handle)!.Bounds),
+            "window off-screen after park_window");
+
+        // Change the plan, then end_turn restores it.
+        var setVis = JsonDocument.Parse(DtoText("set_visibility", new
+        {
+            target_id = targetId,
+            visibility = "return-to-user",
+        })).RootElement;
+        Assert(setVis.GetProperty("visibility").GetString() == "return-to-user", "set_visibility token");
+
+        var endRestore = JsonDocument.Parse(DtoText("end_turn", new { })).RootElement;
+        Assert(endRestore.GetProperty("restored_to_user").GetInt32() == 1, "end_turn restored one");
+        Assert(
+            endRestore.GetProperty("restored_ids").EnumerateArray().Single().GetString() == targetId,
+            "end_turn restored id");
+        AssertRestored(original, WindowEnumerator.Describe(fixture.Handle)!.Bounds, "end_turn restore");
+
+        var listText = DtoText("list_targets", new { });
+        Assert(listText.Contains(targetId, StringComparison.Ordinal), "target stays attached after end_turn");
+
+        var invalid = DtoText("set_visibility", new { target_id = targetId, visibility = "nonsense" });
+        Assert(
+            invalid.Contains("INVALID_ARGUMENTS", StringComparison.Ordinal),
+            $"invalid visibility rejected: {invalid}");
+
+        var close = DtoText("close_target", new { target_id = targetId });
+        Assert(close.Contains("\"ok\":true", StringComparison.Ordinal), "close ok");
+    }
+    finally
+    {
+        manager.CloseAll();
+        fixture.Close();
+    }
+}
+
+static void RunRefusedClose()
+{
+    if (!Environment.UserInteractive ||
+        !System.Windows.Forms.SystemInformation.UserInteractive)
+    {
+        Console.WriteLine("SKIP refused close: no interactive desktop.");
+        return;
+    }
+
+    using var fixture = StartFixtureOffscreen();
+    Thread.Sleep(250);
+    var original = WindowEnumerator.Describe(fixture.Handle)!.Bounds;
+
+    using var manager = new TargetManager();
+    using var client = new McpTestClient(manager);
+
+    try
+    {
+        client.Call("initialize", new
+        {
+            protocolVersion = "2024-11-05",
+            capabilities = new { },
+            clientInfo = new { name = "ghostscreen-refused-close-test", version = "0" },
+        });
+
+        var attachText = McpTestClient.Text(client.Tool("attach_window", new
+        {
+            hwnd = $"0x{fixture.Handle.ToInt64():X}",
+            confirm = true,
+            visibility = "agent-only",
+        }));
+        using var attachDocument = JsonDocument.Parse(attachText);
+        var targetId = attachDocument.RootElement.GetProperty("id").GetString()!;
+
+        // Simulate a save-changes prompt: the window refuses WM_CLOSE.
+        fixture.VetoClose = true;
+
+        var closeText = McpTestClient.Text(client.Tool("close_target", new { target_id = targetId }));
+        Assert(closeText.Contains("\"ok\":true", StringComparison.Ordinal), "close ok");
+        Assert(
+            closeText.Contains("WINDOW_CLOSE_REFUSED", StringComparison.Ordinal),
+            $"refused close must surface a warning: {closeText}");
+
+        // The window must come back unchanged instead of being stranded off-screen.
+        AssertRestored(original, WindowEnumerator.Describe(fixture.Handle)!.Bounds, "refused close fallback");
+    }
+    finally
+    {
+        fixture.VetoClose = false;
         manager.CloseAll();
         fixture.Close();
     }
