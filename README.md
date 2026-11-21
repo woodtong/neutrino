@@ -104,19 +104,19 @@ dotnet format GhostScreen.sln --verify-no-changes
 - 该开关也会运行严格协商门集成测试（WPF 夹具 + 固定“用户活跃”探针；会短暂改变前台焦点）。
 - 测试结束会断言：测试进程没有留下任何与虚拟屏相交的窗口。
 
-## 发布包（最新：GitHub Release v0.1.0）
+## 发布包（最新：GitHub Release v0.2.0）
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/publish.ps1 -Version 0.1.0
+powershell -ExecutionPolicy Bypass -File scripts/publish.ps1 -Version 0.2.0
 ```
 
-生成 `artifacts/GhostScreen-0.1.0-win-x64.zip`（约 172 MB，self-contained MCP/CLI/Tray），SHA256 见同名 `.sha256` 文件；zip 与校验和作为 GitHub Release 附件发布。
+生成 `artifacts/GhostScreen-0.2.0-win-x64.zip`（约 206 MB，self-contained MCP/CLI/Tray/Notifier），SHA256 见同名 `.sha256` 文件；zip 与校验和作为 GitHub Release 附件发布。
 版本号：不传 `-Version` 时用 `Directory.Build.props` 的开发线版本（当前 `0.6.0-dev`）；发布时传 `-Version`，经 `dotnet publish -p:Version` 写入，包内 `gs version` 显示发布版本。
 
 安装（可选，unsigned）：`powershell -ExecutionPolicy Bypass -File scripts/install.ps1`
 卸载：`powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Uninstall`
 
-说明：[0.1.0 发布说明](doc/17-0.1.0发布说明.md)；启动配方见 [doc/12-Recipes](doc/12-Recipes.md)。
+说明：[0.2.0 发布说明](doc/17-0.2.0发布说明.md)；启动配方见 [doc/12-Recipes](doc/12-Recipes.md)。
 
 完整数据与截图：[spike/REPORT.md](spike/REPORT.md) 与 `spike/evidence/`。
 
@@ -162,7 +162,7 @@ powershell -ExecutionPolicy Bypass -File scripts/publish.ps1 -Version 0.1.0
 | [spike/P2-MCP-REPORT.md](spike/P2-MCP-REPORT.md) | TargetManager + MCP stdio（13 工具）与集成测试 |
 | [08-MCP客户端配置](doc/08-MCP客户端配置.md) | Claude Code / Codex / Cursor / ZCode 配置与工作流 |
 | [12-Recipes](doc/12-Recipes.md) | 应用/网页启动配方、兼容矩阵、安全边界 |
-| [17-0.1.0 发布说明](doc/17-0.1.0发布说明.md) | 首个 GitHub Release：Human Consent Gate、gs doctor、焦点安全、性能；发布线独立编号 |
+| [17-0.2.0 发布说明](doc/17-0.2.0发布说明.md) | 第二个 GitHub Release：窗口可见性/end_turn、协商窗重做、门禁活动细分、独立通知模块 |
 | [18-技术栈](doc/18-技术栈.md) | 实际运行时、项目矩阵、Windows/CDP/MCP API 与依赖边界 |
 | [历史归档](doc/archive/README.md) | 市场调研与 0.1–0.3 旧发布说明（不再维护） |
 

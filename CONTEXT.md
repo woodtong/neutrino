@@ -75,10 +75,11 @@ spike/                      P0/P1-11/P1-CLI/P1-12/P2-MCP 报告与证据
 - 性能（本机微基准，Release）：`WindowEnumerator.List` 29.15 → 1.04 ms/op（进程名缓存），`Children` 0.31 → 0.17 ms/op，`ClickClientPoint` 2.10 → 1.60 ms/op（`ChildrenLite` + 单次 UIA 树查找）
 - 清理：删除解包后的 `artifacts/GhostScreen-*` 目录（保留 zip/SHA256，3.3G → 929M）与 `spike/out`；旧发布说明/市场调研归档到 `doc/archive/`
 - v0.1.0 发布包：`artifacts/GhostScreen-0.1.0-win-x64.zip`（206 MB，首个 GitHub Release，含 mcp/cli/tray/docs）；历史本地包 `GhostScreen-0.4.0-beta-win-x64.zip`（172 MB，21 工具）
+- v0.2.0 发布包：`artifacts/GhostScreen-0.2.0-win-x64.zip`（开发线 `0.6.0-dev` 快照，含 mcp/cli/tray/Notifier/docs，25 工具、47/47 测试）
 - 客户端级验证（2026-11-20）：真实 MCP 客户端 initialize + 25 工具 + 窗口可见性/end_turn 往返 + 状态端点
 - 关闭 web target 后 Edge 进程退出、`%LOCALAPPDATA%\GhostScreen\web-profiles` 为空
 - 状态端点：MCP 启动后 stderr 打印 URL；`%LOCALAPPDATA%\GhostScreen\status.json` 含 url/token/port/pid，退出删除；状态页含 target 卡片与 5s 刷新缩略图（`/api/screenshot`）
-- 本地：分支 `feat/window-visibility`，HEAD `04d68e0`；GitHub 已有 v0.1.0 Release（`doc/17-0.1.0发布说明.md`）
+- 本地：`main`（`feat/window-visibility` 已合并），发布说明 `doc/17-0.2.0发布说明.md`；GitHub 已有 v0.1.0、v0.2.0 两个 Release
 
 ## 5. 已知限制
 

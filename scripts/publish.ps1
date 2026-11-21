@@ -45,6 +45,17 @@ dotnet publish (Join-Path $root "src/GhostScreen.Tray/GhostScreen.Tray.csproj") 
     -p:Version=$Version `
     -o (Join-Path $out "tray")
 
+# The standalone notifier host: the tray hosts the same pipe server in-process,
+# but with the tray down the MCP process spawns this exe on demand. Keep the
+# folder name "GhostScreen.Notifier" so NotifierClient.FindExe resolves
+# "<package>/GhostScreen.Notifier/GhostScreen.Notifier.exe" from the mcp folder.
+Write-Host "Publishing notifier..."
+dotnet publish (Join-Path $root "src/GhostScreen.Notifier/GhostScreen.Notifier.csproj") `
+    -c Release -r win-x64 --self-contained true `
+    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+    -p:Version=$Version `
+    -o (Join-Path $out "GhostScreen.Notifier")
+
 Copy-Item (Join-Path $root "README.md") (Join-Path $out "README.md")
 Copy-Item (Join-Path $root "CHANGELOG.md") (Join-Path $out "CHANGELOG.md")
 Copy-Item (Join-Path $root "LICENSE") (Join-Path $out "LICENSE")

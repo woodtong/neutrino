@@ -85,13 +85,41 @@ window belongs and the human can always override in both directions.
   paused" from "the human walked away" without guessing from the 2 s window;
   47/47 tests.
 
+## [0.2.0] - 2026-11-21
+
+Second GitHub release: the 0.6.0-dev development snapshot. Release-line versions
+stay independent of the development line.
+
+See `doc/17-0.2.0发布说明.md`; the zip and SHA256 are attached to the GitHub
+release. The 0.1.0 notes moved to `doc/archive/17-0.1.0发布说明.md`.
+
+- Window visibility (P4-12): `attach_window` takes `visibility: agent-only`
+  (parked off-screen for its whole life, closed in place with `WM_CLOSE` on
+  release, refusing apps restored with `WINDOW_CLOSE_REFUSED` after a 4s grace)
+  or `return-to-user` (default). Four new tools - `show_to_user`,
+  `park_window`, `set_visibility`, `end_turn` - take the surface from 21 to 25.
+- Consent prompt: content-sized layout (no more 380x154 against 168px of
+  content), visible countdown with a shrinking bar, and a "defer" action that
+  pushes the server-side deadline 30s at a time, three times at most.
+- Consent prompt copy now asks for permission to interrupt rather than to
+  operate, and names what the human is doing; `activity`/`activity_detail`/
+  `interruption`/`idle_ms` travel through `USER_ACTIVE`, `AWAITING_USER`, the
+  MCP error payload and `status.consents[]`. The gate still never reads input
+  content: `typing` is inferred from a caret plus recent input.
+- Notifications moved out of the MCP process into `src/GhostScreen.Notifier`
+  (named pipe, `toast` and serialised `prompt` messages, tray hosts it when
+  running, spawned on demand otherwise, failures return null). Silent events now
+  speak: user-active waiting, degraded, close-refused, recovery-restored,
+  mcp-down, mcp-fatal. Copy follows the system UI language.
+- 47/47 tests, build 0x0 on seven projects.
+
 ## [0.1.0] - 2026-11-07
 
 First GitHub release. Release-line versions start at 0.1.0 and are numbered
 independently of the development line (currently 0.5.0-dev); this package is
 the 0.5.0-dev development snapshot plus the `gs doctor` work (P2-07).
 
-See `doc/17-0.1.0发布说明.md`; the zip and SHA256 are attached to the GitHub
+See `doc/archive/17-0.1.0发布说明.md`; the zip and SHA256 are attached to the GitHub
 release.
 
 - Human Consent Gate (strict default), focus-safe native element actions,
