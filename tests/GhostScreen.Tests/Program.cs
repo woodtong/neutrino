@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Pipes;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -1008,6 +1009,159 @@ var tests = new (string Name, Action Body)[]
         var consumed = consents.Consume(third.ConsentId!, "t1", "click_element", "id:button");
         Assert(consumed.Outcome == GateOutcome.Expired, "consent ticket must be one-time");
     }),
+    ("ConsentManager carries the human's activity into the ticket", () =>
+    {
+        var now = DateTimeOffset.UtcNow;
+        var consents = new ConsentManager(() => now, maxAttempts: 3);
+
+        var first = consents.Evaluate("t1", "Target", "click_element", "id:button", "typing", "记事本", "foreground");
+        Assert(first.Outcome == GateOutcome.Retry, "first attempt is retryable");
+        Assert(first.Activity == "typing", "gate result carries the activity token");
+        Assert(first.ActivityDetail == "记事本", "gate result carries the foreground title");
+        Assert(first.Interruption == "foreground", "gate result carries the interruption kind");
+        Assert(
+            first.Message is not null && first.Message.Contains("typing in \"记事本\"", StringComparison.Ordinal),
+            $"retry message describes the activity, got: {first.Message}");
+
+        consents.Evaluate("t1", "Target", "click_element", "id:button", "typing", "记事本", "foreground");
+        var awaiting = consents.Evaluate("t1", "Target", "click_element", "id:button", "typing", "记事本", "foreground");
+        Assert(awaiting.Outcome == GateOutcome.AwaitingUser, "third attempt asks the human");
+        Assert(awaiting.ConsentId is not null, "awaiting carries a consent id");
+
+        var view = consents.Pending().Single();
+        Assert(view.Activity == "typing", "ticket keeps the activity token");
+        Assert(view.ActivityDetail == "记事本", "ticket keeps the window title");
+        Assert(view.Interruption == "foreground", "ticket keeps the interruption kind");
+    }),
+    ("ConsentManager reports how long the human has been idle", () =>
+    {
+        var now = DateTimeOffset.UtcNow;
+        var consents = new ConsentManager(() => now, maxAttempts: 3);
+
+        var first = consents.Evaluate("t2", "Target", "click_element", "id:button", "typing", "记事本", "foreground", 1_234);
+        Assert(first.IdleMs == 1_234, $"retry carries idle_ms, got {first.IdleMs}");
+
+        consents.Evaluate("t2", "Target", "click_element", "id:button", "typing", "记事本", "foreground", 1_240);
+        consents.Evaluate("t2", "Target", "click_element", "id:button", "typing", "记事本", "foreground", 1_250);
+
+        var view = consents.Pending().Single();
+        Assert(view.IdleMs == 1_250, $"ticket keeps idle_ms, got {view.IdleMs}");
+    }),
+    ("Notification copy follows the notification language", () =>
+    {
+        var previous = NotifierText.Language;
+        try
+        {
+            NotifierText.Language = "en";
+            var english = ConsentPromptCopy.Build(
+                "c2", "deepseek-flash", "Order entry", "click_element", "typing", "Notepad",
+                remainingMs: 15_000, deferrals: 0, maxDeferrals: 3);
+
+            Assert(english.Title == "An agent asks to interrupt you", $"english title, got: {english.Title}");
+            Assert(
+                english.Body!.Contains("wants to click a control in \"Order entry\"", StringComparison.Ordinal),
+                $"english body names target and action, got: {english.Body}");
+            Assert(
+                english.Body.Contains("You are: typing in \"Notepad\"", StringComparison.Ordinal),
+                $"english body states the activity, got: {english.Body}");
+            Assert(
+                english.ActionLabels is ["Deny", "Defer", "Allow"],
+                $"english buttons, got: {string.Join(",", english.ActionLabels ?? [])}");
+
+            NotifierText.Language = "zh";
+            var chinese = ConsentPromptCopy.Build(
+                "c3", "deepseek-flash", "订单录入", "click_element", "typing", "记事本",
+                remainingMs: 15_000, deferrals: 0, maxDeferrals: 3);
+
+            Assert(chinese.Title == "智能体请求打断你", $"chinese title, got: {chinese.Title}");
+            Assert(chinese.ActionLabels is ["拒绝", "延时", "允许打断"], "chinese buttons");
+        }
+        finally
+        {
+            NotifierText.Language = previous;
+        }
+    }),
+    ("Consent prompt copy asks for permission to interrupt", () =>
+    {
+        var prompt = ConsentPromptCopy.Build(
+            "c1",
+            "deepseek-flash",
+            "订单录入 - 记事本",
+            "click_element",
+            "typing",
+            "记事本",
+            remainingMs: 45_000,
+            deferrals: 1,
+            maxDeferrals: 3);
+
+        Assert(prompt.Kind == "prompt", "consent is a prompt, not a toast");
+        Assert(prompt.Key == "consent:c1", "prompt key binds to the ticket");
+        Assert(prompt.Title == "智能体请求打断你", $"title asks to interrupt, got: {prompt.Title}");
+        Assert(
+            prompt.Body.Contains("想在「订单录入 - 记事本」上点击一个控件", StringComparison.Ordinal),
+            $"body names the target and action, got: {prompt.Body}");
+        Assert(
+            prompt.Body.Contains("等于打断你正在做的事", StringComparison.Ordinal),
+            "body says what the cost is");
+        Assert(
+            prompt.Body.Contains("你正在：「记事本」里输入文字", StringComparison.Ordinal),
+            $"body names the human's activity, got: {prompt.Body}");
+        Assert(
+            prompt.Body.Contains("请先停下手上的输入", StringComparison.Ordinal),
+            "body tells the human what to stop doing");
+        Assert(prompt.TimeoutAction == "allow", "countdown falls through to allow");
+        Assert(
+            string.Join(",", prompt.ActionIds ?? []) == "deny,defer,allow",
+            $"defer is offered until the budget is spent, got: {string.Join(",", prompt.ActionIds ?? [])}");
+        Assert(
+            prompt.CountdownFormat is not null && prompt.CountdownFormat.Contains("已延时 1/3", StringComparison.Ordinal),
+            $"countdown mentions the deferral, got: {prompt.CountdownFormat}");
+
+        var exhausted = ConsentPromptCopy.Build(
+            "c2", "agent", "记事本", "click_element", "active", null, 10_000, 3, 3);
+        Assert(
+            !(exhausted.ActionIds ?? []).Contains("defer"),
+            "no defer button once the budget is spent");
+    }),
+    ("Notifier pipe round-trips one prompt", () =>
+    {
+        var pipeName = "gs-notifier-test-" + Guid.NewGuid().ToString("N")[..8];
+        var prompt = ConsentPromptCopy.Build(
+            "c9", "agent", "记事本", "click_element", "typing", "记事本", 15_000, 0, 3);
+
+        using var sink = new NamedPipeServerStream(
+            pipeName,
+            PipeDirection.InOut,
+            1,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous);
+
+        NotifierPrompt? received = null;
+        var server = Task.Run(async () =>
+        {
+            await sink.WaitForConnectionAsync().ConfigureAwait(false);
+            using var reader = new StreamReader(sink, Encoding.UTF8, true, 1024, leaveOpen: true);
+            var line = await reader.ReadLineAsync().ConfigureAwait(false);
+            received = line is null ? null : NotifierProtocol.ParsePrompt(line);
+            using var writer = new StreamWriter(sink, new UTF8Encoding(false), 1024, leaveOpen: true)
+            {
+                AutoFlush = true,
+                NewLine = "\n",
+            };
+            await writer.WriteLineAsync(NotifierProtocol.Format(new NotifierReply(true, "defer", null)))
+                .ConfigureAwait(false);
+        });
+
+        using var client = new NotifierClient(pipeName, spawnIfMissing: false);
+        var reply = client.SendAsync(prompt).GetAwaiter().GetResult();
+        server.GetAwaiter().GetResult();
+
+        Assert(received is not null, "the sink parsed a prompt off the pipe");
+        Assert(received!.Key == "consent:c9", $"prompt key survived the pipe, got: {received.Key}");
+        Assert(received.ActionIds is { Length: 3 }, "buttons survived the pipe");
+        Assert(reply is not null && reply.Ok, "client got a reply");
+        Assert(reply!.Action == "defer", $"action survived the reply, got: {reply.Action}");
+    }),
     ("ConsentManager deny and mismatch", () =>
     {
         var now = DateTimeOffset.UtcNow;
@@ -1033,6 +1187,106 @@ var tests = new (string Name, Action Body)[]
         var other = consents.Pending()[0];
         var mismatch = consents.Consume(other.Id, "t2", "click_element", "id:different");
         Assert(mismatch.Outcome == GateOutcome.Expired, "consent must bind to the exact element");
+    }),
+    ("ConsentManager defer pushes the countdown and caps out", () =>
+    {
+        var now = DateTimeOffset.UtcNow;
+        var consents = new ConsentManager(
+            () => now,
+            autoAllowAfter: TimeSpan.FromSeconds(15),
+            maxAttempts: 3,
+            maxDeferrals: 2,
+            deferIncrement: TimeSpan.FromSeconds(30));
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            consents.Evaluate("t1", "Target", "click_element", "id:button");
+        }
+
+        var pending = consents.Pending()[0];
+        Assert(pending.RemainingMs == 15_000, $"initial remaining={pending.RemainingMs}");
+        Assert(pending.TotalMs == 15_000 && pending.Deferrals == 0, "initial window");
+
+        var first = consents.Defer(pending.Id);
+        Assert(first is { Deferred: true, Deferrals: 1 }, "first defer should be accepted");
+        Assert(first!.RemainingMs == 45_000 && first.TotalMs == 45_000, "defer adds one increment");
+
+        // Past the original deadline but inside the extended one: still pending.
+        now = now.AddSeconds(20);
+        var stillPending = consents.Consume(pending.Id, "t1", "click_element", "id:button");
+        Assert(stillPending.Outcome == GateOutcome.AwaitingUser, "defer must prevent the auto-allow");
+
+        var view = consents.Pending()[0];
+        Assert(view.TotalMs == 45_000, $"view exposes the extension window: {view.TotalMs}");
+        Assert(view.Deferrals == 1, "view exposes the deferral count");
+
+        var second = consents.Defer(pending.Id);
+        Assert(second is { Deferred: true, Deferrals: 2 }, "second defer should be accepted");
+        var third = consents.Defer(pending.Id);
+        Assert(third is { Deferred: false, Deferrals: 2 }, "third defer must be refused");
+        Assert(consents.Pending().Count == 1, "refused defer keeps the consent pending");
+
+        now = now.AddSeconds(30);
+        Assert(
+            consents.Consume(pending.Id, "t1", "click_element", "id:button").Outcome == GateOutcome.AwaitingUser,
+            "consent still pending at 60s");
+        now = now.AddSeconds(25);
+        var autoAllowed = consents.Consume(pending.Id, "t1", "click_element", "id:button");
+        Assert(autoAllowed.Outcome == GateOutcome.Allowed, "countdown still auto-allows eventually");
+        Assert(consents.Defer(pending.Id) is null, "unknown consent id reports null");
+    }),
+    ("Status endpoint defers a pending consent", () =>
+    {
+        var now = DateTimeOffset.UtcNow;
+        var consents = new ConsentManager(() => now, maxAttempts: 3);
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            consents.Evaluate("t1", "Target", "click_element", "id:button");
+        }
+
+        var id = consents.Pending()[0].Id;
+        var tempDirectory = Path.Combine(Path.GetTempPath(), "gs-consent-defer-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+        using var manager = new TargetManager(
+            new TargetJournal(Path.Combine(tempDirectory, "targets.json"), Path.Combine(tempDirectory, "profiles")),
+            InteractionPolicy.Strict,
+            new FixedHumanActivityProbe(active: true),
+            consents);
+        using var status = new StatusServer(manager, 0, "defer-test-token", Path.Combine(tempDirectory, "status.json"));
+        status.Start();
+        using var client = new StatusClient(new StatusEndpoint(status.Url, "defer-test-token"));
+
+        try
+        {
+            var snapshot = client.GetStatusAsync().GetAwaiter().GetResult();
+            Assert(snapshot is not null && snapshot.Consents.Count == 1, "status exposes the pending consent");
+            Assert(snapshot!.Consents[0].TotalMs == 15_000, $"status total_ms={snapshot.Consents[0].TotalMs}");
+
+            var deferred = client.DeferConsentAsync(id).GetAwaiter().GetResult();
+            Assert(deferred is { Ok: true, Deferrals: 1 }, "defer endpoint should accept the request");
+            Assert(deferred!.TotalMs == 45_000, $"defer endpoint reports the new window: {deferred.TotalMs}");
+
+            var refreshed = client.GetStatusAsync().GetAwaiter().GetResult();
+            Assert(
+                refreshed is not null &&
+                refreshed.Consents[0].Deferrals == 1 &&
+                refreshed.Consents[0].MaxDeferrals == 3,
+                "status reflects the deferral");
+
+            var unknown = client.DeferConsentAsync("missing").GetAwaiter().GetResult();
+            Assert(unknown is { Unknown: true, Ok: false }, "unknown consent id is reported to the caller");
+        }
+        finally
+        {
+            status.Dispose();
+            try
+            {
+                Directory.Delete(tempDirectory, recursive: true);
+            }
+            catch
+            {
+                // Best effort.
+            }
+        }
     }),
     ("WPF UIA fallback executes and restores focus", () =>
     {

@@ -8,22 +8,50 @@ using GhostScreen.Web;
 using GhostScreen.Windows;
 
 DpiAwareness.EnablePerMonitorV2();
-using var manager = new TargetManager(policy: InteractionPolicyExtensions.FromEnvironment());
 
-if (!manager.LastRecovery.IsEmpty)
+// The notifier is a separate process (or the tray's server): it must survive this
+// process dying, which is exactly when the human most needs to be told.
+using var notifier = new NotifierClient();
+AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+    ReportFatal(notifier, e.ExceptionObject as Exception);
+
+try
 {
-    Console.Error.WriteLine($"GhostScreen recovery: {manager.LastRecovery}");
-    foreach (var message in manager.LastRecovery.Messages)
+    using var manager = new TargetManager(
+        policy: InteractionPolicyExtensions.FromEnvironment(),
+        notifier: notifier);
+
+    if (!manager.LastRecovery.IsEmpty)
     {
-        Console.Error.WriteLine($"  {message}");
+        Console.Error.WriteLine($"GhostScreen recovery: {manager.LastRecovery}");
+        foreach (var message in manager.LastRecovery.Messages)
+        {
+            Console.Error.WriteLine($"  {message}");
+        }
     }
+
+    using var status = new StatusServer(manager);
+    status.Start();
+    Console.Error.WriteLine($"GhostScreen status page: {status.Url}");
+
+    await McpServer.RunStdioAsync(manager);
+}
+catch (Exception ex)
+{
+    ReportFatal(notifier, ex);
+    throw;
 }
 
-using var status = new StatusServer(manager);
-status.Start();
-Console.Error.WriteLine($"GhostScreen status page: {status.Url}");
-
-await McpServer.RunStdioAsync(manager);
+static void ReportFatal(INotifier notifier, Exception? error)
+{
+    var detail = error is null ? "未知错误" : $"{error.GetType().Name}: {error.Message}";
+    notifier.TryToast(
+        "mcp-fatal",
+        NotifierText.FatalTitle,
+        NotifierText.FatalBody(detail),
+        NotifierSeverity.Error,
+        TimeSpan.FromMinutes(1));
+}
 
 public sealed class McpServer
 {
@@ -1246,6 +1274,26 @@ public sealed class McpServer
         if (ex.ExpiresAt is not null)
         {
             error["expires_at"] = ex.ExpiresAt.Value.ToString("O");
+        }
+
+        if (!string.IsNullOrWhiteSpace(ex.Activity))
+        {
+            error["activity"] = ex.Activity;
+        }
+
+        if (!string.IsNullOrWhiteSpace(ex.ActivityDetail))
+        {
+            error["activity_detail"] = ex.ActivityDetail;
+        }
+
+        if (!string.IsNullOrWhiteSpace(ex.Interruption))
+        {
+            error["interruption"] = ex.Interruption;
+        }
+
+        if (ex.IdleMs > 0)
+        {
+            error["idle_ms"] = ex.IdleMs;
         }
 
         return new

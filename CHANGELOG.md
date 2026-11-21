@@ -27,6 +27,63 @@ window belongs and the human can always override in both directions.
   re-parking re-adds it, so crash recovery semantics are unchanged.
 - Server instructions now carry the visibility decision rule and the
   end_turn closing habit for MCP client agents; 40/40 tests.
+- Consent prompt is now content-sized: the dialog lays out with a
+  `TableLayoutPanel` of auto-sized rows and scales its fixed metrics by
+  `DeviceDpi/96`, so the text, countdown and buttons no longer overlap and
+  nothing is clipped at non-100% DPI (the old fixed `380×154` client area was
+  14 px shorter than its own content).
+- Consent prompt countdown is now visible and deferrable: under the text the
+  dialog draws a bar that shrinks with the remaining time, and a new `延时`
+  button pushes the auto-allow deadline back by 30 s (up to 3 times, +90 s in
+  total), so someone still reading is not authorized mid-sentence. The cap
+  keeps an agent from being stalled indefinitely; a defer only moves the
+  pending ticket's deadline and leaves the "one use within 30 s after allow"
+  semantics untouched. Server side: `POST /api/consent?decision=defer` plus
+  `total_ms` / `deferrals` / `max_deferrals` in the status payload; 42/42
+  tests.
+- The consent prompt now asks for permission to *interrupt*, not permission to
+  act: the ticket already exists because the human asked the agent for this
+  action, so the copy names the target and the action, says that the step needs
+  the foreground, states what the human is doing right now, and tells them what
+  to stop (`允许打断` / `延时` / `拒绝`).
+- The gate now reports *why* it blocked, without reading input: `activity`
+  (`typing` | `pointing` | `active` | `none`), `activity_detail` (foreground
+  window title) and `interruption` (`foreground`) travel on `USER_ACTIVE`,
+  `AWAITING_USER` and `status.consents[]`. `typing` is inferred from the
+  foreground thread's caret plus recent input; `pointing` from
+  `GUI_INMENUMODE` / `GUI_INMOVESIZE`. Content is never inspected and the
+  pass thresholds are unchanged (2 s window, 3 attempts); 43/43 tests.
+- Notifications moved out of the MCP process into a standalone module
+  (`GhostScreen.Notifier`, new project). A prompt shown from inside the
+  process that failed could never report its own failure, so: a named pipe
+  (`GhostScreen.Notifier`, one JSON line each way) carries `toast` and
+  `prompt` messages; the tray hosts the pipe server when it is running, and
+  otherwise the caller spawns `GhostScreen.Notifier.exe` on demand and retries
+  once. A missing notifier returns `null` and never changes a tool result. The
+  consent copy now lives in Core (`ConsentPromptCopy`), so both host paths show
+  the same words, and `PromptForm` replaces the tray-only dialog.
+- The notifier also reports what used to be silent: `user-active:{target}` (a
+  toast on the second `USER_ACTIVE` block — "the agent is waiting for you to
+  let go", 60 s cooldown), `degraded:{target}` (`TARGET_HUNG`),
+  `close-refused:{target}` (`WINDOW_CLOSE_REFUSED`, window already restored),
+  `recovery-restored` (crash-recovery summary at startup), `mcp-down` (the tray
+  notices the status endpoint vanished) and `mcp-fatal` (unhandled exception in
+  the MCP process). Every prompt still uses
+  `ShowWithoutActivation` + `WS_EX_NOACTIVATE`, so a notification never takes
+  the keyboard away; 45/45 tests.
+- Notifications now follow the system UI language (`NotifierText`, English
+  fallback, `GHOSTSCREEN_NOTIFY_LANG=zh|en` to override). They are the only
+  localised surface: the rest of the product stays Chinese, because the person
+  being interrupted may not read it.
+- The card picks its monitor instead of always using the primary one: the screen
+  with the foreground window first, then the one under the pointer, and it
+  re-fits on `DpiChanged` so a mixed-DPI setup does not clip or overlap. The
+  tray poll backs off to 5 s while the status endpoint is gone and returns to
+  2 s on the first successful read.
+- `USER_ACTIVE`, `AWAITING_USER` and `status.consents[]` now carry `idle_ms`
+  (time since the last human input), so an agent can tell "the human just
+  paused" from "the human walked away" without guessing from the 2 s window;
+  47/47 tests.
 
 ## [0.1.0] - 2026-11-07
 

@@ -27,6 +27,18 @@ public sealed class TargetException : Exception
     public string? ConsentId { get; init; }
 
     public DateTimeOffset? ExpiresAt { get; init; }
+
+    /// <summary>What the human was doing when strict blocked: typing / pointing / active.</summary>
+    public string? Activity { get; init; }
+
+    /// <summary>Foreground window title at block time (for the human-facing prompt).</summary>
+    public string? ActivityDetail { get; init; }
+
+    /// <summary>What the action needs from the human: taking the foreground.</summary>
+    public string? Interruption { get; init; }
+
+    /// <summary>Milliseconds since the last human input when the gate blocked.</summary>
+    public long IdleMs { get; init; }
 }
 
 public sealed record UiaObservation(int Epoch, IReadOnlyList<UiaElement> Elements);
@@ -78,6 +90,7 @@ public sealed class TargetSession : ITarget
     private readonly ConsentManager _consents;
     private readonly InteractionPolicy _policy;
     private readonly IHumanActivityProbe _humanActivity;
+    private readonly INotifier? _notifier;
     private static readonly TimeSpan HumanActiveThreshold = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan CloseGrace = TimeSpan.FromSeconds(4);
     private IReadOnlyList<UiaElement> _lastObservation = [];
@@ -97,7 +110,8 @@ public sealed class TargetSession : ITarget
         ConsentManager consents,
         InteractionPolicy policy,
         IHumanActivityProbe humanActivity,
-        WindowVisibility visibility = WindowVisibility.ReturnToUser)
+        WindowVisibility visibility = WindowVisibility.ReturnToUser,
+        INotifier? notifier = null)
     {
         Id = id;
         Info = info;
@@ -106,6 +120,7 @@ public sealed class TargetSession : ITarget
         _policy = policy;
         _humanActivity = humanActivity;
         _visibility = visibility;
+        _notifier = notifier;
         CreatedAt = DateTimeOffset.UtcNow;
         LastUsed = CreatedAt;
     }
@@ -192,6 +207,16 @@ public sealed class TargetSession : ITarget
                 }
 
                 Touch();
+                if (_degradedReason == "TARGET_HUNG")
+                {
+                    _notifier?.TryToast(
+                        $"degraded:{Id}",
+                        NotifierText.DegradedTitle,
+                        NotifierText.DegradedBody(Trim(Info.Title, 40)),
+                        NotifierSeverity.Warning,
+                        TimeSpan.FromMinutes(10));
+                }
+
                 throw;
             }
         }
@@ -486,29 +511,44 @@ public sealed class TargetSession : ITarget
             return;
         }
 
-        if (!_humanActivity.IsActive(HumanActiveThreshold))
+        var activity = _humanActivity.Probe(HumanActiveThreshold);
+        if (!activity.Active)
         {
             return;
         }
 
-        ThrowIfBlocked(_consents.Evaluate(Id, Info.Title, action, elementKey));
+        ThrowIfBlocked(_consents.Evaluate(
+            Id,
+            Info.Title,
+            action,
+            elementKey,
+            activity.ActivityToken,
+            activity.ForegroundTitle,
+            "foreground",
+            activity.IdleMs));
     }
 
-    private static void ThrowIfBlocked(ConsentGateResult result)
+    private void ThrowIfBlocked(ConsentGateResult result)
     {
         switch (result.Outcome)
         {
             case GateOutcome.Allowed:
                 return;
             case GateOutcome.Retry:
+                NotifyStillWaiting(result);
                 throw new TargetException("USER_ACTIVE", result.Message ?? "Human is using the desktop.")
                 {
                     Retryable = true,
                     RetryAfterMs = result.RetryAfterMs,
                     Attempts = result.Attempts,
                     MaxAttempts = result.MaxAttempts,
+                    Activity = result.Activity,
+                    ActivityDetail = result.ActivityDetail,
+                    Interruption = result.Interruption,
+                    IdleMs = result.IdleMs,
                 };
             case GateOutcome.AwaitingUser:
+                NotifyConsent(result);
                 throw new TargetException("AWAITING_USER", result.Message ?? "Waiting for human consent.")
                 {
                     Retryable = true,
@@ -517,6 +557,10 @@ public sealed class TargetSession : ITarget
                     MaxAttempts = result.MaxAttempts,
                     ConsentId = result.ConsentId,
                     ExpiresAt = result.ExpiresAt,
+                    Activity = result.Activity,
+                    ActivityDetail = result.ActivityDetail,
+                    Interruption = result.Interruption,
+                    IdleMs = result.IdleMs,
                 };
             case GateOutcome.Denied:
                 throw new TargetException("USER_DENIED", result.Message ?? "The human denied this action.")
@@ -535,6 +579,93 @@ public sealed class TargetSession : ITarget
                 };
         }
     }
+
+    /// <summary>
+    /// The second refusal is the one worth a toast: the agent is now certain to be
+    /// queued behind the human, and the human has no way of knowing. One toast per
+    /// target per minute — this fires on every retry while the human keeps typing.
+    /// </summary>
+    private void NotifyStillWaiting(ConsentGateResult result)
+    {
+        if (_notifier is null || result.Attempts != 2)
+        {
+            return;
+        }
+
+        _notifier.TryToast(
+            $"user-active:{Id}",
+            NotifierText.StillWaitingTitle,
+            NotifierText.StillWaitingBody(Trim(Info.Title, 40)),
+            NotifierSeverity.Info,
+            TimeSpan.FromSeconds(60));
+    }
+
+    /// <summary>
+    /// A ticket exists, which means the agent is fully blocked until the human
+    /// answers. Raise the prompt on the notification channel; the reply is applied
+    /// to the same ticket the status endpoint exposes, so both paths stay in sync.
+    /// </summary>
+    private void NotifyConsent(ConsentGateResult result)
+    {
+        if (_notifier is null || string.IsNullOrWhiteSpace(result.ConsentId))
+        {
+            return;
+        }
+
+        _ = PromptForConsentAsync(result.ConsentId, _notifier);
+    }
+
+    private async Task PromptForConsentAsync(string consentId, INotifier notifier)
+    {
+        while (true)
+        {
+            var view = _consents.Get(consentId);
+            if (view is null || !string.Equals(view.Status, "pending", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            var prompt = ConsentPromptCopy.Build(
+                view.Id,
+                view.Agent,
+                view.TargetTitle,
+                view.Action,
+                view.Activity,
+                view.ActivityDetail,
+                view.RemainingMs,
+                view.Deferrals,
+                view.MaxDeferrals);
+
+            var reply = await notifier.SendAsync(prompt).ConfigureAwait(false);
+
+            // No reply means the human closed the window or nothing is listening:
+            // leave the ticket alone so it expires (or is answered in the status page).
+            switch (reply?.Action)
+            {
+                case "allow":
+                    _consents.Decide(consentId, allow: true);
+                    return;
+                case "deny":
+                    _consents.Decide(consentId, allow: false);
+                    return;
+                case "defer":
+                    var deferred = _consents.Defer(consentId);
+                    if (deferred is null || !deferred.Deferred)
+                    {
+                        // Limit reached or already decided; re-prompting would loop.
+                        _consents.Decide(consentId, allow: false);
+                        return;
+                    }
+
+                    continue;
+                default:
+                    return;
+            }
+        }
+    }
+
+    private static string Trim(string value, int max) =>
+        value.Length <= max ? value : value[..max] + "…";
 
     /// <summary>Change the end-of-life plan without moving the window.</summary>
     public void SetVisibility(WindowVisibility visibility)
@@ -647,6 +778,12 @@ public sealed class TargetSession : ITarget
                     $"WINDOW_CLOSE_REFUSED: the app ignored WM_CLOSE within the {(int)CloseGrace.TotalSeconds}s grace period " +
                     "(it may be showing a save prompt). The window was restored to the user's " +
                     "desktop instead of being closed.";
+                _notifier?.TryToast(
+                    $"close-refused:{Id}",
+                    NotifierText.CloseRefusedTitle,
+                    NotifierText.CloseRefusedBody(Trim(Info.Title, 40)),
+                    NotifierSeverity.Warning,
+                    TimeSpan.FromMinutes(5));
                 return;
             }
 
@@ -731,18 +868,48 @@ public sealed class TargetManager : IDisposable
     private readonly Dictionary<string, ITarget> _targets = new(StringComparer.Ordinal);
     private readonly TargetJournal _journal;
     private readonly IHumanActivityProbe _humanActivity;
+    private readonly INotifier? _notifier;
 
     public TargetManager(
         TargetJournal? journal = null,
         InteractionPolicy policy = InteractionPolicy.Strict,
         IHumanActivityProbe? humanActivity = null,
-        ConsentManager? consents = null)
+        ConsentManager? consents = null,
+        INotifier? notifier = null)
     {
         _journal = journal ?? new TargetJournal();
         _humanActivity = humanActivity ?? new LastInputHumanActivityProbe();
+        _notifier = notifier;
         Policy = policy;
         Consents = consents ?? new ConsentManager();
         LastRecovery = _journal.Recover();
+        NotifyRecovery();
+    }
+
+    /// <summary>The notification channel, if this host has one (null in tests).</summary>
+    public INotifier? Notifier => _notifier;
+
+    /// <summary>
+    /// A previous run crashed and left windows parked off-screen. The journal puts
+    /// them back, but the human should hear about it — a window appearing on its own
+    /// is otherwise indistinguishable from a bug.
+    /// </summary>
+    private void NotifyRecovery()
+    {
+        if (_notifier is null || LastRecovery.IsEmpty)
+        {
+            return;
+        }
+
+        _notifier.TryToast(
+            "recovery-restored",
+            NotifierText.RecoveryTitle,
+            NotifierText.RecoveryBody(
+                LastRecovery.RestoredApps,
+                LastRecovery.KilledBrowsers,
+                LastRecovery.SkippedApps),
+            NotifierSeverity.Warning,
+            TimeSpan.FromMinutes(10));
     }
 
     public InteractionPolicy Policy { get; }
@@ -794,7 +961,8 @@ public sealed class TargetManager : IDisposable
                 Consents,
                 Policy,
                 _humanActivity,
-                visibility);
+                visibility,
+                _notifier);
             _journal.RecordApp(id, session);
 
             lock (_sync)

@@ -43,7 +43,11 @@ public sealed record ConsentGateResult(
     int Attempts,
     int MaxAttempts,
     int RetryAfterMs,
-    string? Message = null);
+    string? Message = null,
+    string? Activity = null,
+    string? ActivityDetail = null,
+    string? Interruption = null,
+    long IdleMs = 0);
 
 public sealed record ConsentView(
     string Id,
@@ -55,7 +59,25 @@ public sealed record ConsentView(
     DateTimeOffset CreatedAt,
     DateTimeOffset ExpiresAt,
     long RemainingMs,
-    string Status);
+    string Status,
+    long TotalMs,
+    int Deferrals,
+    int MaxDeferrals,
+    string Activity,
+    string? ActivityDetail,
+    string Interruption,
+    long IdleMs = 0);
+
+/// <summary>Result of pushing a pending consent's deadline back by one step.</summary>
+public sealed record ConsentDeferResult(
+    bool Deferred,
+    GateOutcome Outcome,
+    DateTimeOffset? AutoAllowAt,
+    long RemainingMs,
+    long TotalMs,
+    int Deferrals,
+    int MaxDeferrals,
+    string? Message = null);
 
 /// <summary>
 /// Human Consent Gate: tracks focus-requiring UIA attempts, creates a consent
@@ -85,7 +107,23 @@ public sealed class ConsentManager
         public required string Agent;
         public required DateTimeOffset CreatedAt;
         public required DateTimeOffset AutoAllowAt;
-        public required int Attempts;
+
+        /// <summary>What the human was doing when the gate blocked: typing / pointing / active.</summary>
+        public required string Activity;
+
+        /// <summary>Foreground window title at block time, used to tell the human what to stop.</summary>
+        public string? ActivityDetail;
+
+        /// <summary>What the action needs from the human: taking the foreground.</summary>
+        public required string Interruption;
+
+        /// <summary>Milliseconds since the last human input; lets the agent judge urgency.</summary>
+        public long IdleMs;
+
+        /// <summary>Start of the current countdown window; moves with every deferral.</summary>
+        public DateTimeOffset WindowStart;
+        public int Attempts;
+        public int Deferrals;
         public DateTimeOffset AllowedUntil;
         public State State = State.Pending;
     }
@@ -107,13 +145,17 @@ public sealed class ConsentManager
         TimeSpan? autoAllowAfter = null,
         TimeSpan? consentTtl = null,
         int maxAttempts = 3,
-        TimeSpan? attemptWindow = null)
+        TimeSpan? attemptWindow = null,
+        int maxDeferrals = 3,
+        TimeSpan? deferIncrement = null)
     {
         _now = now ?? (() => DateTimeOffset.UtcNow);
         AutoAllowAfter = autoAllowAfter ?? TimeSpan.FromSeconds(15);
         ConsentTtl = consentTtl ?? TimeSpan.FromSeconds(30);
         MaxAttempts = Math.Max(1, maxAttempts);
         AttemptWindow = attemptWindow ?? TimeSpan.FromSeconds(60);
+        MaxDeferrals = Math.Max(0, maxDeferrals);
+        DeferIncrement = deferIncrement ?? TimeSpan.FromSeconds(30);
     }
 
     public TimeSpan AutoAllowAfter { get; }
@@ -124,18 +166,31 @@ public sealed class ConsentManager
 
     public TimeSpan AttemptWindow { get; }
 
+    /// <summary>How many times a human may push the countdown back from the prompt.</summary>
+    public int MaxDeferrals { get; }
+
+    /// <summary>How much one "defer" click adds to the countdown.</summary>
+    public TimeSpan DeferIncrement { get; }
+
     /// <summary>Shown in the human prompt; set from MCP clientInfo.</summary>
     public string AgentName { get; set; } = "agent";
 
     /// <summary>
     /// Record a blocked UIA attempt. Returns Retry before the threshold and an
     /// AwaitingUser ticket at the threshold (or the existing pending ticket).
+    /// <paramref name="activity"/> describes what the human is doing (the gate
+    /// only knows "input happened" plus a typing/pointing inference), so the
+    /// prompt can ask for an interruption instead of a bare permission.
     /// </summary>
     public ConsentGateResult Evaluate(
         string targetId,
         string targetTitle,
         string action,
-        string elementKey)
+        string elementKey,
+        string activity = "active",
+        string? activityDetail = null,
+        string interruption = "foreground",
+        long idleMs = 0)
     {
         lock (_gate)
         {
@@ -150,7 +205,8 @@ public sealed class ConsentManager
                 {
                     _requests.Remove(key);
                     _attempts.Remove(key);
-                    return StartAttempts(key, targetId, targetTitle, action, elementKey, now);
+                    return StartAttempts(
+                        key, targetId, targetTitle, action, elementKey, now, activity, activityDetail, interruption, idleMs);
                 }
 
                 return state switch
@@ -168,12 +224,18 @@ public sealed class ConsentManager
                         existing.Attempts,
                         MaxAttempts,
                         0,
-                        "The human denied this action."),
-                    _ => StartAttempts(key, targetId, targetTitle, action, elementKey, now),
+                        "The human denied this action.",
+                        existing.Activity,
+                        existing.ActivityDetail,
+                        existing.Interruption,
+                        existing.IdleMs),
+                    _ => StartAttempts(
+                        key, targetId, targetTitle, action, elementKey, now, activity, activityDetail, interruption, idleMs),
                 };
             }
 
-            return StartAttempts(key, targetId, targetTitle, action, elementKey, now);
+            return StartAttempts(
+                key, targetId, targetTitle, action, elementKey, now, activity, activityDetail, interruption, idleMs);
         }
     }
 
@@ -319,6 +381,69 @@ public sealed class ConsentManager
         }
     }
 
+    /// <summary>
+    /// Push a pending consent's auto-allow deadline back by <see cref="DeferIncrement"/>,
+    /// so a human who is still reading is not auto-authorized mid-sentence. Bounded by
+    /// <see cref="MaxDeferrals"/> so an agent can never be stalled indefinitely.
+    /// Returns null when the id is unknown.
+    /// </summary>
+    public ConsentDeferResult? Defer(string consentId)
+    {
+        lock (_gate)
+        {
+            var now = _now();
+            var request = _requests.Values.FirstOrDefault(candidate =>
+                candidate.Id.Equals(consentId, StringComparison.Ordinal));
+
+            if (request is null)
+            {
+                return null;
+            }
+
+            var state = Resolve(request, now);
+            if (state != State.Pending)
+            {
+                return new ConsentDeferResult(
+                    false,
+                    state == State.Denied ? GateOutcome.Denied : GateOutcome.Expired,
+                    null,
+                    0,
+                    0,
+                    request.Deferrals,
+                    MaxDeferrals,
+                    "The consent is no longer pending; defer is too late.");
+            }
+
+            if (request.Deferrals >= MaxDeferrals)
+            {
+                return new ConsentDeferResult(
+                    false,
+                    GateOutcome.AwaitingUser,
+                    request.AutoAllowAt,
+                    Math.Max(0, (long)(request.AutoAllowAt - now).TotalMilliseconds),
+                    WindowTotalMs(request),
+                    request.Deferrals,
+                    MaxDeferrals,
+                    "The deferral limit is reached; allow or deny instead.");
+            }
+
+            request.Deferrals++;
+            request.AutoAllowAt += DeferIncrement;
+            request.WindowStart = now;
+            var remainingMs = Math.Max(0, (long)(request.AutoAllowAt - now).TotalMilliseconds);
+
+            return new ConsentDeferResult(
+                true,
+                GateOutcome.AwaitingUser,
+                request.AutoAllowAt,
+                remainingMs,
+                remainingMs,
+                request.Deferrals,
+                MaxDeferrals,
+                null);
+        }
+    }
+
     public IReadOnlyList<ConsentView> Pending()
     {
         lock (_gate)
@@ -355,7 +480,11 @@ public sealed class ConsentManager
         string targetTitle,
         string action,
         string elementKey,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        string activity,
+        string? activityDetail,
+        string interruption,
+        long idleMs)
     {
         if (!_attempts.TryGetValue(key, out var attempt) || now - attempt.FirstAt > AttemptWindow)
         {
@@ -368,14 +497,19 @@ public sealed class ConsentManager
 
         if (attempt.Count < MaxAttempts)
         {
+            var delay = RetryDelay(attempt.Count);
             return new ConsentGateResult(
                 GateOutcome.Retry,
                 null,
                 null,
                 attempt.Count,
                 MaxAttempts,
-                RetryDelay(attempt.Count),
-                $"Human is using the desktop; retry after {RetryDelay(attempt.Count)} ms.");
+                delay,
+                $"The human is {ActivityPhrase(activity, activityDetail)}; retry after {delay} ms.",
+                activity,
+                activityDetail,
+                interruption,
+                idleMs);
         }
 
         var request = new ConsentRequest
@@ -389,7 +523,12 @@ public sealed class ConsentManager
             Agent = AgentName,
             CreatedAt = now,
             AutoAllowAt = now + AutoAllowAfter,
+            WindowStart = now,
             Attempts = attempt.Count,
+            Activity = activity,
+            ActivityDetail = activityDetail,
+            Interruption = interruption,
+            IdleMs = idleMs,
         };
         _requests[key] = request;
 
@@ -400,7 +539,11 @@ public sealed class ConsentManager
             attempt.Count,
             MaxAttempts,
             2_000,
-            $"A consent prompt was shown; retry with consent_id after it is allowed or the countdown expires.");
+            "A consent prompt was shown; retry with consent_id after it is allowed or the countdown expires.",
+            activity,
+            activityDetail,
+            interruption,
+            idleMs);
     }
 
     private ConsentGateResult Awaiting(
@@ -415,7 +558,11 @@ public sealed class ConsentManager
             request.Attempts,
             MaxAttempts,
             2_000,
-            message);
+            message,
+            request.Activity,
+            request.ActivityDetail,
+            request.Interruption,
+            request.IdleMs);
 
     private State Resolve(ConsentRequest request, DateTimeOffset now)
     {
@@ -446,8 +593,29 @@ public sealed class ConsentManager
             request.CreatedAt,
             expires,
             Math.Max(0, (long)(expires - now).TotalMilliseconds),
-            request.State.ToString().ToLowerInvariant());
+            request.State.ToString().ToLowerInvariant(),
+            WindowTotalMs(request),
+            request.Deferrals,
+            MaxDeferrals,
+            request.Activity,
+            request.ActivityDetail,
+            request.Interruption,
+            request.IdleMs);
     }
+
+    /// <summary>Plain-English description of the pointer-free activity token.</summary>
+    private static string ActivityPhrase(string activity, string? detail) => activity switch
+    {
+        "typing" => detail is null ? "typing" : $"typing in \"{detail}\"",
+        "pointing" => detail is null ? "using the pointer" : $"clicking in \"{detail}\"",
+        _ => detail is null ? "using the desktop" : $"using \"{detail}\"",
+    };
+
+    /// <summary>Length of the countdown window currently running, for the progress bar.</summary>
+    private static long WindowTotalMs(ConsentRequest request) =>
+        request.State == State.Pending
+            ? Math.Max(0, (long)(request.AutoAllowAt - request.WindowStart).TotalMilliseconds)
+            : 0;
 
     private static string MakeKey(string targetId, string action, string elementKey) =>
         $"{targetId}\u001f{action}\u001f{elementKey}";

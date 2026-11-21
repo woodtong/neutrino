@@ -20,7 +20,24 @@ public sealed record StatusConsent(
     string Agent,
     DateTimeOffset ExpiresAt,
     long RemainingMs,
-    string Status);
+    string Status,
+    long TotalMs = 0,
+    int Deferrals = 0,
+    int MaxDeferrals = 0,
+    string Activity = "active",
+    string? ActivityDetail = null,
+    string Interruption = "foreground",
+    long IdleMs = 0);
+
+/// <summary>Outcome of pushing a pending consent's countdown back ("延时").</summary>
+public sealed record ConsentDeferOutcome(
+    bool Ok,
+    bool Unknown,
+    DateTimeOffset ExpiresAt,
+    long RemainingMs,
+    long TotalMs,
+    int Deferrals,
+    int MaxDeferrals);
 
 public sealed record StatusSnapshot(
     string Version,
@@ -149,7 +166,24 @@ public sealed class StatusClient : IDisposable
                         consent.TryGetProperty("remaining_ms", out var remaining) && remaining.TryGetInt64(out var remainingValue)
                             ? remainingValue
                             : 0,
-                        consent.TryGetProperty("status", out var status) ? status.GetString() ?? string.Empty : string.Empty));
+                        consent.TryGetProperty("status", out var status) ? status.GetString() ?? string.Empty : string.Empty,
+                        consent.TryGetProperty("total_ms", out var total) && total.TryGetInt64(out var totalValue)
+                            ? totalValue
+                            : 0,
+                        consent.TryGetProperty("deferrals", out var deferrals) && deferrals.TryGetInt32(out var deferralsValue)
+                            ? deferralsValue
+                            : 0,
+                        consent.TryGetProperty("max_deferrals", out var maxDeferrals) && maxDeferrals.TryGetInt32(out var maxDeferralsValue)
+                            ? maxDeferralsValue
+                            : 0,
+                        consent.TryGetProperty("activity", out var activity) ? activity.GetString() ?? "active" : "active",
+                        consent.TryGetProperty("activity_detail", out var activityDetail) ? activityDetail.GetString() : null,
+                        consent.TryGetProperty("interruption", out var interruption)
+                            ? interruption.GetString() ?? "foreground"
+                            : "foreground",
+                        consent.TryGetProperty("idle_ms", out var idle) && idle.TryGetInt64(out var idleValue)
+                            ? idleValue
+                            : 0));
                 }
             }
 
@@ -247,6 +281,60 @@ public sealed class StatusClient : IDisposable
         catch
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Push a pending consent's auto-allow deadline back one step. Returns null on a
+    /// transport failure; <see cref="ConsentDeferOutcome.Unknown"/> flags an unknown id.
+    /// </summary>
+    public async Task<ConsentDeferOutcome?> DeferConsentAsync(
+        string consentId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var path = $"/api/consent?consent_id={Uri.EscapeDataString(consentId)}&decision=defer";
+            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(_baseUri, path));
+            request.Headers.Add("X-GhostScreen-Token", _endpoint.Token);
+
+            using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return new ConsentDeferOutcome(false, true, default, 0, 0, 0, 0);
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            var expiresText = root.TryGetProperty("expires_at", out var expires) ? expires.GetString() : null;
+            _ = DateTimeOffset.TryParse(expiresText, out var expiresAt);
+
+            return new ConsentDeferOutcome(
+                root.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True,
+                false,
+                expiresAt,
+                root.TryGetProperty("remaining_ms", out var remaining) && remaining.TryGetInt64(out var remainingValue)
+                    ? remainingValue
+                    : 0,
+                root.TryGetProperty("total_ms", out var total) && total.TryGetInt64(out var totalValue)
+                    ? totalValue
+                    : 0,
+                root.TryGetProperty("deferrals", out var deferrals) && deferrals.TryGetInt32(out var deferralsValue)
+                    ? deferralsValue
+                    : 0,
+                root.TryGetProperty("max_deferrals", out var maxDeferrals) && maxDeferrals.TryGetInt32(out var maxDeferralsValue)
+                    ? maxDeferralsValue
+                    : 0);
+        }
+        catch
+        {
+            return null;
         }
     }
 

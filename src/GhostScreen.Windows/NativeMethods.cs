@@ -85,6 +85,25 @@ internal static class NativeMethods
         public uint dwTime;
     }
 
+    /// <summary>Focused control / menu state of a GUI thread (winuser.h GUITHREADINFO).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GUITHREADINFO
+    {
+        public int cbSize;
+        public uint flags;
+        public IntPtr hwndActive;
+        public IntPtr hwndFocus;
+        public IntPtr hwndCapture;
+        public IntPtr hwndMenuOwner;
+        public IntPtr hwndMoveSize;
+        public IntPtr hwndCaret;
+        public RECT rcCaret;
+    }
+
+    internal const uint GUI_INMOVESIZE = 0x00000002;
+    internal const uint GUI_INMENUMODE = 0x00000004;
+    internal const uint GUI_POPUPMENUMODE = 0x00000010;
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct WINDOWPLACEMENT
     {
@@ -254,6 +273,10 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO lpgui);
 
     [DllImport("user32.dll")]
     internal static extern int GetSystemMetrics(int nIndex);

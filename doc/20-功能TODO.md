@@ -32,6 +32,15 @@
 
 **建议排期**：P4-13，估 0.5 天（服务端 user-active 信号 + Tray 差分与节流 + 测试）。
 
+### 落地状态（2026-11-21，0.6.0-dev）✅
+
+已实现，但与草案有两处不同，记在这里免得起草时的假设被当成现状：
+
+- **不只是 Tray 端差分**：通知抽成了独立模块 `GhostScreen.Notifier`（命名管道 `GhostScreen.Notifier`，一行 JSON 请求 / 一行 JSON 回复）。托盘在跑时由托盘宿主管道服务，托盘不在时调用方按需拉起 exe——否则"MCP 自己挂了"这一类事件永远报不出来。
+- **「松手提醒」不需要差分轮询**：`TargetSession` 在第二次被 `USER_ACTIVE` 挡住时直接发 `user-active:{target}` toast（`NotifierClient` 按 key 60s 冷却），比"连续 K 次轮询"更早也更准。
+- 事件名最终为：`user-active:{target}`、`consent:{id}`、`degraded:{target}`、`close-refused:{target}`、`recovery-restored`、`mcp-down`、`mcp-fatal`；文案集中在 Core 的 `ConsentPromptCopy` 与各调用点，两条宿主路径一致。
+- 细节见 `doc/02-架构设计.md` §8.1.2、`doc/03-接口设计.md` §4.2。
+
 ---
 
 ## 2. 其他候选（占位）

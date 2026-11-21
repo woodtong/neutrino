@@ -7,5 +7,6 @@
 
   <ItemGroup>
     <ProjectReference Include="../GhostScreen.Core/GhostScreen.Core.csproj" />
+    <ProjectReference Include="../GhostScreen.Notifier/GhostScreen.Notifier.csproj" />
   </ItemGroup>
 </Project>

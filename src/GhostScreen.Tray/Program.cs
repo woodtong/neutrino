@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using GhostScreen.Core;
-using GhostScreen.TrayApp;
+using GhostScreen.NotifierApp;
 
 Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 Application.EnableVisualStyles();
@@ -24,10 +24,11 @@ internal sealed class TrayContext : ApplicationContext
     private readonly ToolStripMenuItem _openItem;
     private readonly ToolStripMenuItem _panicItem;
     private readonly System.Windows.Forms.Timer _timer;
+    private readonly NotifierServer _server;
     private StatusClient? _client;
     private bool _refreshing;
     private bool _disposed;
-    private ConsentPromptForm? _prompt;
+    private bool _wasRunning;
 
     public TrayContext()
     {
@@ -54,6 +55,11 @@ internal sealed class TrayContext : ApplicationContext
         };
         _icon.DoubleClick += (_, _) => OpenPage();
 
+        // The tray is the preferred notifier host: it already owns an icon, and a
+        // prompt shown from here keeps working even if the MCP process dies.
+        _server = new NotifierServer(_icon);
+        _server.Start();
+
         _timer = new System.Windows.Forms.Timer { Interval = 2_000 };
         _timer.Tick += async (_, _) => await RefreshAsync();
         _timer.Start();
@@ -68,8 +74,7 @@ internal sealed class TrayContext : ApplicationContext
             _disposed = true;
             _timer.Stop();
             _timer.Dispose();
-            _prompt?.Close();
-            _prompt = null;
+            _server.Dispose();
             _icon.Visible = false;
             _icon.Dispose();
             _client?.Dispose();
@@ -96,7 +101,8 @@ internal sealed class TrayContext : ApplicationContext
                 _client = null;
                 SetState("中微子 未运行", running: false);
                 UpdateTargets(null);
-                UpdateConsent(null);
+                NotifyLostProcess();
+                IdleBackoff(true);
                 return;
             }
 
@@ -111,15 +117,18 @@ internal sealed class TrayContext : ApplicationContext
             {
                 SetState("中微子 状态不可达", running: false);
                 UpdateTargets(null);
-                UpdateConsent(null);
+                NotifyLostProcess();
+                IdleBackoff(true);
                 return;
             }
 
+            _wasRunning = true;
+            IdleBackoff(false);
             SetState(
                 $"中微子 {snapshot.Version} · {snapshot.TargetCount} 个 target",
                 running: true);
             UpdateTargets(snapshot.Targets);
-            UpdateConsent(snapshot.Consents);
+            await SyncConsentsAsync(snapshot.Consents);
         }
         finally
         {
@@ -127,37 +136,88 @@ internal sealed class TrayContext : ApplicationContext
         }
     }
 
-    private void UpdateConsent(IReadOnlyList<StatusConsent>? consents)
+    /// <summary>
+    /// The endpoint is the poll's only data source, so there is nothing to gain from
+    /// asking a dead process every 2 s; slip to 5 s while it is gone and snap back as
+    /// soon as one read succeeds. The pipe, not this timer, drives what the human sees.
+    /// </summary>
+    private void IdleBackoff(bool endpointDown)
     {
-        if (_prompt is not null)
+        var wanted = endpointDown ? 5_000 : 2_000;
+        if (_timer.Interval != wanted)
         {
-            if (consents is null || !consents.Any(consent => consent.Id == _prompt.ConsentId))
-            {
-                _prompt.Close();
-                _prompt = null;
-            }
+            _timer.Interval = wanted;
+        }
+    }
 
+    /// <summary>
+    /// The MCP process went away. Windows it had parked are still off-screen, so the
+    /// human needs to know before they go hunting for a missing window.
+    /// </summary>
+    private void NotifyLostProcess()
+    {
+        if (!_wasRunning)
+        {
             return;
         }
 
+        _wasRunning = false;
+        _server.Notify(new NotifierPrompt(
+            "toast",
+            "mcp-down",
+            NotifierText.DownTitle,
+            NotifierText.DownBody,
+            NotifierSeverity.Warning,
+            TimeoutMs: 10_000));
+    }
+
+    /// <summary>
+    /// The tray is a second pair of eyes on the status endpoint: a ticket the daemon
+    /// announced is already queued in the notifier (skip it), one it did not (older
+    /// MCP build, notification failure) gets a prompt from here instead.
+    /// </summary>
+    private async Task SyncConsentsAsync(IReadOnlyList<StatusConsent>? consents)
+    {
         if (consents is null || consents.Count == 0 || _client is null)
         {
             return;
         }
 
-        var consent = consents[0];
-        var form = new ConsentPromptForm(
-            consent,
-            async allow => _client is not null && await _client.DecideConsentAsync(consent.Id, allow));
-        form.FormClosed += (_, _) =>
+        foreach (var consent in consents)
         {
-            if (ReferenceEquals(_prompt, form))
+            var key = "consent:" + consent.Id;
+            if (_server.IsHandling(key))
             {
-                _prompt = null;
+                continue;
             }
-        };
-        _prompt = form;
-        form.Show();
+
+            var prompt = ConsentPromptCopy.Build(
+                consent.Id,
+                consent.Agent,
+                consent.TargetTitle,
+                consent.Action,
+                consent.Activity,
+                consent.ActivityDetail,
+                consent.RemainingMs,
+                consent.Deferrals,
+                consent.MaxDeferrals);
+
+            var reply = await _server.EnqueueAsync(prompt);
+            if (reply.Action == "allow")
+            {
+                await _client.DecideConsentAsync(consent.Id, allow: true);
+            }
+            else if (reply.Action == "deny")
+            {
+                await _client.DecideConsentAsync(consent.Id, allow: false);
+            }
+            else if (reply.Action == "defer")
+            {
+                // Push the deadline; the next poll re-opens the prompt with the new
+                // remaining time (and one less deferral in the budget).
+                await _client.DeferConsentAsync(consent.Id);
+            }
+        }
     }
 
     private void UpdateTargets(IReadOnlyList<StatusTarget>? targets)

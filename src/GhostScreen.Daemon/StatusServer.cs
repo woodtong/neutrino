@@ -215,14 +215,42 @@ public sealed class StatusServer : IDisposable
                 : null;
 
             if (string.IsNullOrWhiteSpace(consentId) ||
-                (decision != "allow" && decision != "deny"))
+                (decision != "allow" && decision != "deny" && decision != "defer"))
             {
                 await WriteAsync(
                     stream,
                     400,
                     "application/json",
-                    "{\"error\":\"consent_id and decision=allow|deny required\"}")
+                    "{\"error\":\"consent_id and decision=allow|deny|defer required\"}")
                     .ConfigureAwait(false);
+                return;
+            }
+
+            if (decision == "defer")
+            {
+                var deferred = _manager.Consents.Defer(consentId);
+                if (deferred is null)
+                {
+                    await WriteAsync(stream, 404, "application/json", "{\"error\":\"unknown consent_id\"}")
+                        .ConfigureAwait(false);
+                    return;
+                }
+
+                await WriteAsync(
+                    stream,
+                    200,
+                    "application/json",
+                    JsonSerializer.Serialize(new
+                    {
+                        ok = deferred.Deferred,
+                        consent_id = consentId,
+                        outcome = deferred.Outcome.ToString().ToLowerInvariant(),
+                        expires_at = deferred.AutoAllowAt?.ToString("O"),
+                        remaining_ms = deferred.RemainingMs,
+                        total_ms = deferred.TotalMs,
+                        deferrals = deferred.Deferrals,
+                        max_deferrals = deferred.MaxDeferrals,
+                    }, JsonOptions)).ConfigureAwait(false);
                 return;
             }
 
@@ -285,6 +313,13 @@ public sealed class StatusServer : IDisposable
                 created_at = consent.CreatedAt.ToString("O"),
                 expires_at = consent.ExpiresAt.ToString("O"),
                 remaining_ms = consent.RemainingMs,
+                total_ms = consent.TotalMs,
+                deferrals = consent.Deferrals,
+                max_deferrals = consent.MaxDeferrals,
+                activity = consent.Activity,
+                activity_detail = consent.ActivityDetail,
+                interruption = consent.Interruption,
+                idle_ms = consent.IdleMs,
                 status = consent.Status,
             }).ToArray(),
         };
