@@ -1083,45 +1083,56 @@ var tests = new (string Name, Action Body)[]
     }),
     ("Consent prompt copy asks for permission to interrupt", () =>
     {
-        var prompt = ConsentPromptCopy.Build(
-            "c1",
-            "deepseek-flash",
-            "订单录入 - 记事本",
-            "click_element",
-            "typing",
-            "记事本",
-            remainingMs: 45_000,
-            deferrals: 1,
-            maxDeferrals: 3);
+        // The copy is culture-dependent; pin it so the assertions do not depend
+        // on the runner's UI language (CI runs en-US, the dev box runs zh-CN).
+        var previousLanguage = NotifierText.Language;
+        NotifierText.Language = "zh";
+        try
+        {
+            var prompt = ConsentPromptCopy.Build(
+                "c1",
+                "deepseek-flash",
+                "订单录入 - 记事本",
+                "click_element",
+                "typing",
+                "记事本",
+                remainingMs: 45_000,
+                deferrals: 1,
+                maxDeferrals: 3);
 
-        Assert(prompt.Kind == "prompt", "consent is a prompt, not a toast");
-        Assert(prompt.Key == "consent:c1", "prompt key binds to the ticket");
-        Assert(prompt.Title == "智能体请求打断你", $"title asks to interrupt, got: {prompt.Title}");
-        Assert(
-            prompt.Body.Contains("想在「订单录入 - 记事本」上点击一个控件", StringComparison.Ordinal),
-            $"body names the target and action, got: {prompt.Body}");
-        Assert(
-            prompt.Body.Contains("等于打断你正在做的事", StringComparison.Ordinal),
-            "body says what the cost is");
-        Assert(
-            prompt.Body.Contains("你正在：「记事本」里输入文字", StringComparison.Ordinal),
-            $"body names the human's activity, got: {prompt.Body}");
-        Assert(
-            prompt.Body.Contains("请先停下手上的输入", StringComparison.Ordinal),
-            "body tells the human what to stop doing");
-        Assert(prompt.TimeoutAction == "allow", "countdown falls through to allow");
-        Assert(
-            string.Join(",", prompt.ActionIds ?? []) == "deny,defer,allow",
-            $"defer is offered until the budget is spent, got: {string.Join(",", prompt.ActionIds ?? [])}");
-        Assert(
-            prompt.CountdownFormat is not null && prompt.CountdownFormat.Contains("已延时 1/3", StringComparison.Ordinal),
-            $"countdown mentions the deferral, got: {prompt.CountdownFormat}");
+            Assert(prompt.Kind == "prompt", "consent is a prompt, not a toast");
+            Assert(prompt.Key == "consent:c1", "prompt key binds to the ticket");
+            Assert(prompt.Title == "智能体请求打断你", $"title asks to interrupt, got: {prompt.Title}");
+            Assert(
+                prompt.Body.Contains("想在「订单录入 - 记事本」上点击一个控件", StringComparison.Ordinal),
+                $"body names the target and action, got: {prompt.Body}");
+            Assert(
+                prompt.Body.Contains("等于打断你正在做的事", StringComparison.Ordinal),
+                "body says what the cost is");
+            Assert(
+                prompt.Body.Contains("你正在：「记事本」里输入文字", StringComparison.Ordinal),
+                $"body names the human's activity, got: {prompt.Body}");
+            Assert(
+                prompt.Body.Contains("请先停下手上的输入", StringComparison.Ordinal),
+                "body tells the human what to stop doing");
+            Assert(prompt.TimeoutAction == "allow", "countdown falls through to allow");
+            Assert(
+                string.Join(",", prompt.ActionIds ?? []) == "deny,defer,allow",
+                $"defer is offered until the budget is spent, got: {string.Join(",", prompt.ActionIds ?? [])}");
+            Assert(
+                prompt.CountdownFormat is not null && prompt.CountdownFormat.Contains("已延时 1/3", StringComparison.Ordinal),
+                $"countdown mentions the deferral, got: {prompt.CountdownFormat}");
 
-        var exhausted = ConsentPromptCopy.Build(
-            "c2", "agent", "记事本", "click_element", "active", null, 10_000, 3, 3);
-        Assert(
-            !(exhausted.ActionIds ?? []).Contains("defer"),
-            "no defer button once the budget is spent");
+            var exhausted = ConsentPromptCopy.Build(
+                "c2", "agent", "记事本", "click_element", "active", null, 10_000, 3, 3);
+            Assert(
+                !(exhausted.ActionIds ?? []).Contains("defer"),
+                "no defer button once the budget is spent");
+        }
+        finally
+        {
+            NotifierText.Language = previousLanguage;
+        }
     }),
     ("Notifier pipe round-trips one prompt", () =>
     {
