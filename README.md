@@ -41,7 +41,7 @@
 
 ## P1-03 / P1-12 进展
 
-- PrintWindow 6s 超时已加入，跑在专用后台线程，避免挂起应用拖垮线程池；per-target worker 复用仍待做。
+- PrintWindow 6s 超时已加入，跑在专用后台线程，避免挂起应用拖垮线程池；per-target worker 复用**已决定不做**（超时线程由降级封顶 ≤2）。
 - `--quiet` 不变量测试已实现；2026-10-24 安静环境复测 `humanInput=false`，前台/光标/剪贴板不变，3 帧哈希不同，`pass=true`。
 - 报告：[P1-12](spike/P1-12-REPORT.md)。
 
@@ -166,7 +166,7 @@ powershell -ExecutionPolicy Bypass -File scripts/publish.ps1 -Version 0.1.0
 | [18-技术栈](doc/18-技术栈.md) | 实际运行时、项目矩阵、Windows/CDP/MCP API 与依赖边界 |
 | [历史归档](doc/archive/README.md) | 市场调研与 0.1–0.3 旧发布说明（不再维护） |
 
-## 技术栈（0.5.0-dev / 0.1.0 实际）
+## 技术栈（0.6.0-dev / 0.1.0 实际）
 
 - **C# / .NET 8**：Core 为 `net8.0`，Windows 项目为 `net8.0-windows10.0.19041.0`；nullable、analyzers、warnings-as-errors、deterministic
 - **零第三方 NuGet 运行时依赖**：只使用 BCL、Windows SDK/WinRT 投影和 Edge 自带协议
@@ -175,7 +175,7 @@ powershell -ExecutionPolicy Bypass -File scripts/publish.ps1 -Version 0.1.0
 - **网页**：无头 Edge + CDP（`ClientWebSocket` + JSON-RPC）；私有临时 profile；`CreateProcessW` 启动，无 shell
 - **Agent 接口**：手写 MCP stdio（JSON-RPC 2.0，25 工具）；无 MCP SDK 运行时依赖
 - **本地控制面**：原始 `TcpListener` + 手写 HTTP/1.1（127.0.0.1 + token），**不是 ASP.NET Core/Http.sys**；WinForms 托盘 + 非激活协商窗
-- **测试/CI**：自写零依赖测试 runner（32 项）；GitHub Actions `windows-2022`；CodeQL 仅在 public 仓库运行
+- **测试/CI**：自写零依赖测试 runner（40 项）；GitHub Actions `windows-2022`；CodeQL 仅在 public 仓库运行
 - **打包**：`dotnet publish` self-contained single-file `win-x64`；zip + SHA256；unsigned
 
 完整版本、项目矩阵、API/依赖边界见 [18-技术栈](doc/18-技术栈.md)。

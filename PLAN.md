@@ -21,7 +21,7 @@
 | 代码状态 | MCP stdio **25 工具** + 状态端点 + 托盘协商窗 + `gs doctor`；`0.6.0-dev`；测试 40/40（焦点不变量、WPF UIA、严格协商门、doctor、可见性/end_turn） |
 | 下一动作 | **UWP 协商门实测；多 Agent 排队/允许 5 分钟；24h/4-target/混沌 soak；P4-04 混合 DPI/双屏/锁屏；干净机器验证** |
 | 阻塞 | 混合 DPI 需要第二块屏或 VDD；24h soak 需要长时间后台 |
-| 最近更新 | 2026-11-07 |
+| 最近更新 | 2026-11-20 |
 
 **阶段进度**
 
@@ -235,7 +235,7 @@
 - [x] **P2-10 v0.1.0-alpha 发布（本地包）**（0.5d）：self-contained MCP/CLI、zip、SHA256、发布说明；发布版 stdio 冒烟通过。
   - [ ] 干净机器/真实客户端验证。
   - 验收：干净机器可解压运行；release notes 诚实。
-- [x] **P2-11 焦点安全（0.4.1-dev）**（0.5d）：执行优先，拒绝兜底。
+- [x] **P2-11 焦点安全（0.4.1-dev）**（0.5d）：执行优先，拒绝兜底（0.5.0-dev 起由 P2-12 协商门取代：默认 strict 先推迟、多次被挡再问人）。
   - 实测：WinForms/WPF 的 UIA `Invoke`/`SetValue`/`Toggle`/`Select` 都会激活 `WS_EX_NOACTIVATE` 停泊窗口；窗口消息 `BM_CLICK`/`WM_SETTEXT`/`WM_KEYDOWN` 不改变前台，但无法触发 WPF 控件。
   - 实现：`click_element`/`set_text` 按 UIA bounds 找 HWND 子控件走消息；无 HWND 时自动走 UIA pattern 并恢复前台；坐标 `click` 在 WPF/UWP 单 HWND 上用 UIA `AtPoint`；`strict_no_focus_steal=true` 才拒绝；没有可执行 pattern 返回 `ELEMENT_NOT_ACTIONABLE`；`FocusGuard` 500ms 观察 + 100ms 稳定校验，第三窗口不抢回。
   - 测试夹具默认屏外创建；WGC 可见测试需 `GHOSTSCREEN_VISIBLE_TESTS=1`；WPF UIA 测试需 `GHOSTSCREEN_UIA_TESTS=1`；测试结束断言无可见窗口泄漏。

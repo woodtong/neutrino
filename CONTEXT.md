@@ -2,7 +2,7 @@
 
 > 产品名：中微子（Neutrino）；内部代号/代码命名空间仍为 GhostScreen。
 >
-> 更新：2026-10-24。给下一个工作会话用；完整技术/限制报告见 `doc/16`，细节以 `PLAN.md`、`doc/05`、`spike/*-REPORT.md` 为准。
+> 更新：2026-11-21。给下一个工作会话用；完整技术/限制报告见 `doc/16`，细节以 `PLAN.md`、`doc/05`、`spike/*-REPORT.md` 为准。
 
 ## 1. 项目是什么
 
@@ -35,12 +35,12 @@ src/GhostScreen.Mcp         手写 MCP stdio，25 工具（异步）+ 状态端�
 src/GhostScreen.Cli         gs version/state/list/shot（一次性，原生）
 src/GhostScreen.Tray        NotifyIcon：状态轮询/per-target 列表与关闭/打开状态页/急停/退出 + 非激活协商窗（独立小进程）
 tests/FixtureApp            WinForms 夹具（按钮/输入框/列表/动画/拖拽/滚轮/品红标记）
-tests/GhostScreen.Tests     零依赖 runner：32/32（原生/web MCP、焦点不变量、WPF UIA 回退、ConsentManager/严格协商门、外部 CDP、死目标、崩溃恢复、挂起降级、WGC 连续帧、DPI/DPI-unaware 修复、状态页/渲染、URL 安全）
+tests/GhostScreen.Tests     零依赖 runner：40/40（原生/web MCP、焦点不变量、WPF UIA 回退、ConsentManager/严格协商门、外部 CDP、死目标、崩溃恢复、挂起降级、WGC 连续帧、DPI/DPI-unaware 修复、状态页/渲染、URL 安全、gs doctor、窗口可见性/end_turn）
 tests/GhostScreen.WebStress 100 次 open/capture/close 泄漏压力
 spike/                      P0/P1-11/P1-CLI/P1-12/P2-MCP 报告与证据
 ```
 
-**MCP 工具（21）**：list_windows、attach_window、open_web、attach_cdp、list_targets、screenshot、snapshot、observe、click、click_element、scroll、drag、key、set_text、navigate、viewport、console、network、get_html、close_target、close_all。
+**MCP 工具（25）**：list_windows、attach_window、open_web、attach_cdp、list_targets、screenshot、snapshot、observe、click、click_element、scroll、drag、key、set_text、navigate、viewport、console、network、get_html、show_to_user、park_window、set_visibility、end_turn、close_target、close_all。
 - attach 必须 `confirm=true`；open_web 创建私有 headless Edge（无窗口）。
 - attach_cdp 连接已有 Chromium/Electron 调试端口（VS Code），`external=true`，close 只 detach；外部进程死亡后 `TARGET_CLOSED`。
 - 原生 observe 返回 UIA epoch + ref；web observe 返回 DOM ref/selector/bounds(CSS px)。
@@ -52,8 +52,8 @@ spike/                      P0/P1-11/P1-CLI/P1-12/P2-MCP 报告与证据
 
 ## 4. 当前验证
 
-- `dotnet build GhostScreen.sln -c Release`：0 warning / 0 error（源码 `0.4.1-dev`）
-- `dotnet run --project tests/GhostScreen.Tests -c Release`：**32/32**（WGC、WPF UIA、严格协商门测试默认 opt-in 跳过）
+- `dotnet build GhostScreen.sln -c Release`：0 warning / 0 error（源码 `0.6.0-dev`）
+- `dotnet run --project tests/GhostScreen.Tests -c Release`：**40/40**（WGC、WPF UIA、严格协商门测试默认 opt-in 跳过）
   - 原生 MCP 全链路；web MCP 全链路（真实 headless Edge：截图/整页/裁剪/observe/ref+坐标点击/中文输入/Ctrl+S/拖拽/滚动/console/network/390×844@2/snapshot+溢出/navigate/close）
   - **焦点安全**：`click_element`/`set_text` 走 HWND 消息（`strategy=message`），MCP 前后前台/光标/剪贴板不变（检测到人类输入时跳过该断言）；没有可执行 pattern 的元素返回 `ELEMENT_NOT_ACTIONABLE`
   - **WPF UIA 回退**（`GHOSTSCREEN_UIA_TESTS=1`）：按钮 Invoke、文本框 ValuePattern、复选框 Toggle、列表项 SelectionItem 均执行成功，`FocusGuard` 把前台恢复；Label 返回 `ELEMENT_NOT_ACTIONABLE`
@@ -74,15 +74,17 @@ spike/                      P0/P1-11/P1-CLI/P1-12/P2-MCP 报告与证据
 - `dotnet format --verify-no-changes`：通过
 - 性能（本机微基准，Release）：`WindowEnumerator.List` 29.15 → 1.04 ms/op（进程名缓存），`Children` 0.31 → 0.17 ms/op，`ClickClientPoint` 2.10 → 1.60 ms/op（`ChildrenLite` + 单次 UIA 树查找）
 - 清理：删除解包后的 `artifacts/GhostScreen-*` 目录（保留 zip/SHA256，3.3G → 929M）与 `spike/out`；旧发布说明/市场调研归档到 `doc/archive/`
-- 0.4.0-beta 包：`artifacts/GhostScreen-0.4.0-beta-win-x64.zip`（172 MB，SHA256 `1A87DC63...FCBC225`）；发布版冒烟（21 工具 + open_web + close_all + 状态页 + tray）
+- v0.1.0 发布包：`artifacts/GhostScreen-0.1.0-win-x64.zip`（206 MB，首个 GitHub Release，含 mcp/cli/tray/docs）；历史本地包 `GhostScreen-0.4.0-beta-win-x64.zip`（172 MB，21 工具）
+- 客户端级验证（2026-11-20）：真实 MCP 客户端 initialize + 25 工具 + 窗口可见性/end_turn 往返 + 状态端点
 - 关闭 web target 后 Edge 进程退出、`%LOCALAPPDATA%\GhostScreen\web-profiles` 为空
 - 状态端点：MCP 启动后 stderr 打印 URL；`%LOCALAPPDATA%\GhostScreen\status.json` 含 url/token/port/pid，退出删除；状态页含 target 卡片与 5s 刷新缩略图（`/api/screenshot`）
-- 本地提交 `fc06d29` + `ac352f3`；GitHub 远端待 `gh auth login` 后创建
+- 本地：分支 `feat/window-visibility`，HEAD `04d68e0`；GitHub 已有 v0.1.0 Release（`doc/17-0.1.0发布说明.md`）
 
 ## 5. 已知限制
 
 - 原生元素动作只对 **HWND 子控件**能保证零激活；WPF/UWP/自绘控件没有子 HWND，UIA 动作会短暂激活目标。strict 默认通过协商门控制；`balanced`/`force` 仍可能短暂打断。
-- strict 的协商窗依赖托盘进程；托盘未运行时服务器仍会在 15s 后自动放行，但没有可视提示。多 Agent 排队、允许 5 分钟、锁屏处理仍待做。
+- `agent-only` 窗口关闭走 `WM_CLOSE` + 4s 宽限；应用拒绝（如保存提示）时窗口被原位还原到桌面并返回 `WINDOW_CLOSE_REFUSED`，需人工处置。
+- strict 的协商窗依赖托盘进程；托盘未运行时服务器仍会在 15s 后自动放行，但没有可视提示（`doc/20` 已把“松手提醒”列为 P4-13 候选）。多 Agent 排队、允许 5 分钟、锁屏处理仍待做。
 - 键盘是消息级，复杂 IME/快捷键需应用级验证。
 - 没有独立 daemon/HTTP/多客户端；MCP 单进程；崩溃后靠下次启动恢复（已实现），独立 watchdog 未做。
 - 状态页跟随 MCP 进程，MCP 退出/崩溃即失效；缩略图 0.2fps（无连续帧/SSE）；token 在 URL 中，仅本机使用。
